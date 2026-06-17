@@ -1,0 +1,27 @@
+# Drop next to Supabase's official docker-compose.yml in <supabase-repo>/docker/.
+# Adds a Caddy reverse proxy that terminates TLS for the public API subdomain
+# and forwards to the internal Kong gateway.
+#
+# Studio is left on its default 0.0.0.0:3000 binding. Do NOT port-forward 3000
+# from the router; access it from the LAN only (http://<vm-lan-ip>:3000).
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: supabase-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN}
+    depends_on:
+      - kong
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm -v)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//usr/local/bin/**)",
+      "Bash(brew --version)",
+      "Bash(brew install *)",
+      "Bash(mv /Users/aweng/Projects/flashy/supabase /tmp/flashy-supabase-stash)",
+      "Read(//tmp/**)"
+    ]
+  }
+}

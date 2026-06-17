@@ -1,98 +1,118 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { Link, Redirect, useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
+import { useAuth } from '@/lib/auth';
+import { useCurrentChild } from '@/lib/current-child';
+import { db } from '@/lib/db';
+import type { Child } from '@/types/domain';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
+export default function ProfilePicker() {
+  const { ready, signedIn, signOut } = useAuth();
+  const router = useRouter();
+  const { setChild } = useCurrentChild();
+  const [children, setChildren] = useState<Child[] | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!signedIn) return;
+      let cancelled = false;
+      void (async () => {
+        const parent = await db.getCurrentParent();
+        if (!parent) {
+          if (!cancelled) setChildren([]);
+          return;
+        }
+        const list = await db.listChildren(parent.id);
+        if (!cancelled) setChildren(list);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [signedIn]),
+  );
+
+  if (!ready) {
     return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
+      <ThemedView style={styles.container}>
+        <SafeAreaView style={[styles.safe, styles.centered]}>
+          <ThemedText themeColor="textSecondary">Loading…</ThemedText>
+        </SafeAreaView>
+      </ThemedView>
     );
   }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
 
-export default function HomeScreen() {
+  if (!signedIn) {
+    return <Redirect href="/sign-in" />;
+  }
+
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <ThemedText type="title">Who&apos;s playing?</ThemedText>
+          <Pressable onPress={signOut}>
+            <ThemedText themeColor="textSecondary">Sign out</ThemedText>
+          </Pressable>
+        </View>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
+        <View style={styles.children}>
+          {children?.map((c) => (
+            <Pressable
+              key={c.id}
+              style={styles.childCard}
+              onPress={() => {
+                setChild(c);
+                router.push('/home');
+              }}>
+              <ThemedView type="backgroundElement" style={styles.avatarTile}>
+                <ThemedText style={styles.avatar}>{c.avatar ?? '🙂'}</ThemedText>
+              </ThemedView>
+              <ThemedText type="subtitle">{c.display_name}</ThemedText>
+            </Pressable>
+          ))}
+          <Link href="/add-child" asChild>
+            <Pressable style={styles.childCard}>
+              <ThemedView type="backgroundElement" style={styles.avatarTile}>
+                <ThemedText style={styles.avatarPlus}>+</ThemedText>
+              </ThemedView>
+              <ThemedText themeColor="textSecondary">Add</ThemedText>
+            </Pressable>
+          </Link>
+        </View>
       </SafeAreaView>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
+  container: { flex: 1 },
+  safe: { flex: 1, padding: Spacing.four, gap: Spacing.five },
+  centered: { alignItems: 'center', justifyContent: 'center' },
+  header: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
   },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+  children: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.four,
+    justifyContent: 'center',
   },
-  heroSection: {
+  childCard: { alignItems: 'center', gap: Spacing.three },
+  avatarTile: {
+    width: 140,
+    height: 140,
+    borderRadius: Spacing.four,
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
   },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
+  avatar: { fontSize: 72 },
+  avatarPlus: { fontSize: 56, opacity: 0.6 },
 });

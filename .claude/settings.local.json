@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm -v)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//usr/local/bin/**)",
+      "Bash(brew --version)",
+      "Bash(brew install *)",
+      "Bash(mv /Users/aweng/Projects/flashy/supabase /tmp/flashy-supabase-stash)",
+      "Read(//tmp/**)",
+      "Bash(mv /tmp/flashy-supabase-stash /Users/aweng/Projects/flashy/supabase)",
+      "Bash(mv /tmp/flashy-claude-stash /Users/aweng/Projects/flashy/.claude)",
+      "Bash(chmod +x /Users/aweng/Projects/flashy/infra/supabase/bootstrap.sh /Users/aweng/Projects/flashy/infra/supabase/apply-migration.sh)"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+# Caddy auto-issues a Let's Encrypt cert for ${DOMAIN} (set in the compose .env).
+# Requires ports 80 and 443 to be reachable from the public internet
+# (HTTP-01 / TLS-ALPN challenges). Forward 80/443 on the router to this VM.
+
+{$DOMAIN} {
+    encode gzip zstd
+    reverse_proxy kong:8000
+}
