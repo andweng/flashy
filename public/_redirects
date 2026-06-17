@@ -1,7 +1,7 @@
 # SPA fallback for dynamic deck routes (/decks/<id>).
-# Static files (e.g. /home.html, /decks.html, /decks/new.html, /sw.js) are
-# served as-is because Cloudflare Pages checks for existing files before
-# evaluating redirect rules. Only paths under /decks/ that have no matching
-# file fall through to index.html, where Expo Router's client-side routing
-# reads location.pathname and renders /decks/[id].
-/decks/*    /index.html   200
+# Targets app.html (a build-time copy of index.html) instead of index.html
+# directly so Cloudflare Pages' redirect-loop analyzer doesn't trip on the
+# /index path-normalization heuristic. Static files (e.g. /home.html,
+# /decks/new.html, /sw.js) are still served as-is — Cloudflare Pages checks
+# for existing files before evaluating redirect rules.
+/decks/*    /app.html   200
