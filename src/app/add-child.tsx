@@ -7,9 +7,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { AVATARS } from '@/lib/avatars';
 import { db } from '@/lib/db';
-
-const AVATARS = ['🦊', '🐻', '🐰', '🐶', '🐱', '🐯', '🦁', '🐮', '🐷', '🐸', '🦄', '🐧'];
 
 export default function AddChildScreen() {
   const router = useRouter();

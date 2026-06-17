@@ -8,7 +8,10 @@ export interface DB {
   getCurrentParent(): Promise<Parent | null>;
 
   listChildren(parentId: string): Promise<Child[]>;
+  getChild(id: string): Promise<Child | null>;
   createChild(input: Omit<Child, 'id'>): Promise<Child>;
+  updateChild(id: string, patch: Partial<Omit<Child, 'id' | 'parent_id'>>): Promise<Child>;
+  deleteChild(id: string): Promise<void>;
 
   listDecksForParent(parentId: string): Promise<Deck[]>;
   listDecksForChild(childId: string): Promise<Deck[]>;
@@ -28,6 +31,7 @@ export interface DB {
   unassignDeckFromChild(deckId: string, childId: string): Promise<void>;
 
   listDueCardStatesForChild(childId: string, today: string): Promise<CardStateWithCard[]>;
+  listCardStatesForChild(childId: string): Promise<CardState[]>;
   upsertCardState(state: CardState): Promise<void>;
 
   recordReview(input: Omit<Review, 'id' | 'reviewed_at'>): Promise<Review>;

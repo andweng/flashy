@@ -3,6 +3,7 @@
 // where the API takes it as input.
 
 import { supabase } from '@/lib/supabase';
+import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
@@ -38,6 +39,15 @@ export const supabaseDB: DB = {
     return data ?? [];
   },
 
+  async getChild(id): Promise<Child | null> {
+    const { data, error } = await supabase
+      .from('children')
+      .select(CHILD_COLS)
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
   async createChild(input): Promise<Child> {
     const { data, error } = await supabase
       .from('children')
@@ -46,6 +56,21 @@ export const supabaseDB: DB = {
       .single();
     if (error) throw error;
     return data as Child;
+  },
+  async updateChild(id, patch): Promise<Child> {
+    const { data, error } = await supabase
+      .from('children')
+      .update(patch)
+      .eq('id', id)
+      .select(CHILD_COLS)
+      .single();
+    if (error) throw error;
+    return data as Child;
+  },
+  async deleteChild(id) {
+    // FK cascade handles card_states + deck_assignments.
+    const { error } = await supabase.from('children').delete().eq('id', id);
+    if (error) throw error;
   },
 
   async listDecksForParent(parentId): Promise<Deck[]> {
@@ -136,7 +161,7 @@ export const supabaseDB: DB = {
     if (e2) throw e2;
     const childIds = ((assignments ?? []) as Array<{ child_id: string }>).map((a) => a.child_id);
     if (childIds.length) {
-      const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+      const today = getEffectiveToday();
       const rows = childIds.map((childId) => ({
         child_id: childId,
         card_id: (card as { id: string }).id,
@@ -189,7 +214,7 @@ export const supabaseDB: DB = {
     if (e2) throw e2;
     const cardIds = ((cardRows ?? []) as Array<{ id: string }>).map((c) => c.id);
     if (cardIds.length) {
-      const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+      const today = getEffectiveToday();
       const rows = cardIds.map((cardId) => ({
         child_id: childId,
         card_id: cardId,
@@ -235,6 +260,15 @@ export const supabaseDB: DB = {
       const { deck, ...cardFields } = card;
       return { ...stateFields, card: cardFields, deck };
     });
+  },
+
+  async listCardStatesForChild(childId): Promise<CardState[]> {
+    const { data, error } = await supabase
+      .from('card_states')
+      .select(CARD_STATE_COLS)
+      .eq('child_id', childId);
+    if (error) throw error;
+    return data ?? [];
   },
 
   async upsertCardState(state) {

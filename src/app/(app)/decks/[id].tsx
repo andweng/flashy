@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
@@ -9,25 +9,37 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { serializeDeck } from '@/lib/deck-export';
-import type { Card, Child, Deck, GradingMode } from '@/types/domain';
+import { bucketLetter } from '@/lib/leitner';
+import { getEffectiveToday } from '@/lib/today';
+import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
 
 export default function DeckDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const theme = useTheme();
+  const { child: currentChild } = useCurrentChild();
 
   const [deck, setDeck] = useState<Deck | null>(null);
   const [cards, setCards] = useState<Card[]>([]);
   const [children, setChildren] = useState<Child[]>([]);
   const [assignedSet, setAssignedSet] = useState<Set<string>>(new Set());
+  const [cardStates, setCardStates] = useState<Map<string, CardState>>(new Map());
+  const [bucketPickerCardId, setBucketPickerCardId] = useState<string | null>(null);
 
   // Quick-add form
   const [front, setFront] = useState('');
   const [back, setBack] = useState('');
   const [mode, setMode] = useState<GradingMode>('self_grade');
   const [addPending, setAddPending] = useState(false);
+
+  // Inline deck editing (name + description)
+  const [editingDeck, setEditingDeck] = useState(false);
+  const [editDeckName, setEditDeckName] = useState('');
+  const [editDeckDescription, setEditDeckDescription] = useState('');
+  const [editDeckPending, setEditDeckPending] = useState(false);
 
   // Inline card editing
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -55,7 +67,13 @@ export default function DeckDetailScreen() {
     setCards(cs);
     setAssignedSet(new Set(assignedIds));
     if (parent) setChildren(await db.listChildren(parent.id));
-  }, [id]);
+    if (currentChild) {
+      const all = await db.listCardStatesForChild(currentChild.id);
+      setCardStates(new Map(all.map((s) => [s.card_id, s])));
+    } else {
+      setCardStates(new Map());
+    }
+  }, [id, currentChild]);
 
   useFocusEffect(
     useCallback(() => {
@@ -67,7 +85,8 @@ export default function DeckDetailScreen() {
     if (!deck) return;
     const f = front.trim();
     const b = back.trim();
-    if (!f || !b) return;
+    if (!f) return;
+    if (mode === 'typed' && !b) return;
     setAddPending(true);
     try {
       await db.createCard({
@@ -106,7 +125,8 @@ export default function DeckDetailScreen() {
     if (!editingId) return;
     const f = editFront.trim();
     const b = editBack.trim();
-    if (!f || !b) return;
+    if (!f) return;
+    if (editMode === 'typed' && !b) return;
     setEditPending(true);
     try {
       const updated = await db.updateCard(editingId, {
@@ -119,6 +139,56 @@ export default function DeckDetailScreen() {
     } finally {
       setEditPending(false);
     }
+  }
+
+  function startEditDeck() {
+    if (!deck) return;
+    setEditDeckName(deck.name);
+    setEditDeckDescription(deck.description ?? '');
+    setEditingDeck(true);
+  }
+
+  function cancelEditDeck() {
+    setEditingDeck(false);
+  }
+
+  async function saveEditDeck() {
+    if (!deck) return;
+    const name = editDeckName.trim();
+    if (!name) return;
+    setEditDeckPending(true);
+    try {
+      const updated = await db.updateDeck(deck.id, {
+        name,
+        description: editDeckDescription.trim() || null,
+      });
+      setDeck(updated);
+      setEditingDeck(false);
+    } finally {
+      setEditDeckPending(false);
+    }
+  }
+
+  async function setBucket(cardId: string, bucketIndex: number) {
+    if (!currentChild) return;
+    const existing = cardStates.get(cardId);
+    const today = getEffectiveToday();
+    const newState: CardState = {
+      child_id: currentChild.id,
+      card_id: cardId,
+      bucket_index: bucketIndex,
+      next_due_on: today,
+      consecutive_passes_in_top_bucket: 0,
+      graduated_at: null,
+      last_reviewed_at: existing?.last_reviewed_at ?? null,
+    };
+    await db.upsertCardState(newState);
+    setCardStates((m) => {
+      const next = new Map(m);
+      next.set(cardId, newState);
+      return next;
+    });
+    setBucketPickerCardId(null);
   }
 
   async function toggleAssign(childId: string, currentlyAssigned: boolean) {
@@ -184,6 +254,7 @@ export default function DeckDetailScreen() {
   if (!deck) {
     return (
       <ThemedView style={styles.container}>
+        <Stack.Screen options={{ title: 'Deck' }} />
         <SafeAreaView style={[styles.safe, styles.centered]}>
           <ThemedText themeColor="textSecondary">Loading…</ThemedText>
         </SafeAreaView>
@@ -193,11 +264,71 @@ export default function DeckDetailScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <Stack.Screen options={{ title: deck.name }} />
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.scroll}>
-          <ThemedText type="title">{deck.name}</ThemedText>
-          {deck.description && (
-            <ThemedText themeColor="textSecondary">{deck.description}</ThemedText>
+          {editingDeck ? (
+            <ThemedView type="backgroundElement" style={styles.section}>
+              <TextInput
+                value={editDeckName}
+                onChangeText={setEditDeckName}
+                placeholder="Deck name"
+                placeholderTextColor={theme.textSecondary}
+                editable={!editDeckPending}
+                autoFocus
+                style={[styles.input, { color: theme.text, borderColor: theme.textSecondary }]}
+              />
+              <TextInput
+                value={editDeckDescription}
+                onChangeText={setEditDeckDescription}
+                placeholder="Description (optional)"
+                placeholderTextColor={theme.textSecondary}
+                editable={!editDeckPending}
+                multiline
+                style={[
+                  styles.input,
+                  styles.deckEditMultiline,
+                  { color: theme.text, borderColor: theme.textSecondary },
+                ]}
+              />
+              <View style={styles.editButtons}>
+                <Pressable
+                  onPress={cancelEditDeck}
+                  style={styles.cancelBtn}
+                  disabled={editDeckPending}>
+                  <ThemedText themeColor="textSecondary">Cancel</ThemedText>
+                </Pressable>
+                <Pressable
+                  onPress={saveEditDeck}
+                  style={[
+                    styles.saveBtn,
+                    (!editDeckName.trim() || editDeckPending) && styles.addBtnDisabled,
+                  ]}
+                  disabled={!editDeckName.trim() || editDeckPending}>
+                  <ThemedText style={styles.addBtnText}>
+                    {editDeckPending ? '…' : 'Save'}
+                  </ThemedText>
+                </Pressable>
+              </View>
+            </ThemedView>
+          ) : (
+            <>
+              <View style={styles.titleRow}>
+                <ThemedText type="title" style={styles.flex1}>{deck.name}</ThemedText>
+                <Pressable onPress={startEditDeck}>
+                  <ThemedText themeColor="textSecondary">Edit</ThemedText>
+                </Pressable>
+              </View>
+              {deck.description && (
+                <ThemedText themeColor="textSecondary">{deck.description}</ThemedText>
+              )}
+              <ThemedText themeColor="textSecondary" type="small">
+                Schedule:{' '}
+                {deck.bucket_intervals_days
+                  .map((d, i) => `${bucketLetter(i)} every ${d}d`)
+                  .join(' · ')}
+              </ThemedText>
+            </>
           )}
 
           {/* Quick-add card */}
@@ -214,7 +345,7 @@ export default function DeckDetailScreen() {
             <TextInput
               value={back}
               onChangeText={setBack}
-              placeholder="Back"
+              placeholder={mode === 'typed' ? 'Back (the answer)' : 'Back (optional)'}
               placeholderTextColor={theme.textSecondary}
               editable={!addPending}
               onSubmitEditing={addCard}
@@ -233,9 +364,13 @@ export default function DeckDetailScreen() {
               </Pressable>
             </View>
             <Pressable
-              style={[styles.addBtn, (!front.trim() || !back.trim() || addPending) && styles.addBtnDisabled]}
+              style={[
+                styles.addBtn,
+                (!front.trim() || (mode === 'typed' && !back.trim()) || addPending) &&
+                  styles.addBtnDisabled,
+              ]}
               onPress={addCard}
-              disabled={!front.trim() || !back.trim() || addPending}>
+              disabled={!front.trim() || (mode === 'typed' && !back.trim()) || addPending}>
               <ThemedText style={styles.addBtnText}>{addPending ? '…' : 'Add card'}</ThemedText>
             </Pressable>
           </ThemedView>
@@ -257,7 +392,7 @@ export default function DeckDetailScreen() {
                 <TextInput
                   value={editBack}
                   onChangeText={setEditBack}
-                  placeholder="Back"
+                  placeholder={editMode === 'typed' ? 'Back (the answer)' : 'Back (optional)'}
                   placeholderTextColor={theme.textSecondary}
                   editable={!editPending}
                   onSubmitEditing={saveEdit}
@@ -281,29 +416,67 @@ export default function DeckDetailScreen() {
                   </Pressable>
                   <Pressable
                     onPress={saveEdit}
-                    style={[styles.saveBtn, (!editFront.trim() || !editBack.trim() || editPending) && styles.addBtnDisabled]}
-                    disabled={!editFront.trim() || !editBack.trim() || editPending}>
+                    style={[
+                      styles.saveBtn,
+                      (!editFront.trim() ||
+                        (editMode === 'typed' && !editBack.trim()) ||
+                        editPending) &&
+                        styles.addBtnDisabled,
+                    ]}
+                    disabled={
+                      !editFront.trim() || (editMode === 'typed' && !editBack.trim()) || editPending
+                    }>
                     <ThemedText style={styles.addBtnText}>{editPending ? '…' : 'Save'}</ThemedText>
                   </Pressable>
                 </View>
               </ThemedView>
             ) : (
               <ThemedView key={card.id} type="backgroundElement" style={styles.cardRow}>
-                <Pressable style={styles.cardText} onPress={() => startEdit(card)}>
-                  <ThemedText>{card.front}</ThemedText>
-                  <ThemedText themeColor="textSecondary" type="small">{card.back}</ThemedText>
-                  <ThemedText themeColor="textSecondary" type="small">
-                    {card.grading_mode === 'typed' ? 'typed' : 'self-grade'}
-                  </ThemedText>
-                </Pressable>
-                <View style={styles.rowActions}>
-                  <Pressable onPress={() => startEdit(card)}>
-                    <ThemedText themeColor="textSecondary">Edit</ThemedText>
+                <View style={styles.cardRowMain}>
+                  <Pressable style={styles.cardText} onPress={() => startEdit(card)}>
+                    <ThemedText>{card.front}</ThemedText>
+                    {card.back && (
+                      <ThemedText themeColor="textSecondary" type="small">{card.back}</ThemedText>
+                    )}
+                    <ThemedText themeColor="textSecondary" type="small">
+                      {card.grading_mode === 'typed' ? 'typed' : 'self-grade'}
+                    </ThemedText>
                   </Pressable>
-                  <Pressable onPress={() => removeCard(card.id)}>
-                    <ThemedText style={styles.deleteText}>Delete</ThemedText>
-                  </Pressable>
+                  <View style={styles.rowActions}>
+                    {currentChild && cardStates.has(card.id) && (
+                      <Pressable
+                        onPress={() =>
+                          setBucketPickerCardId(bucketPickerCardId === card.id ? null : card.id)
+                        }
+                        style={styles.bucketChip}>
+                        <ThemedText type="small">
+                          Bucket {bucketLetter(cardStates.get(card.id)!.bucket_index)}
+                        </ThemedText>
+                      </Pressable>
+                    )}
+                    <Pressable onPress={() => startEdit(card)}>
+                      <ThemedText themeColor="textSecondary">Edit</ThemedText>
+                    </Pressable>
+                    <Pressable onPress={() => removeCard(card.id)}>
+                      <ThemedText style={styles.deleteText}>Delete</ThemedText>
+                    </Pressable>
+                  </View>
                 </View>
+                {bucketPickerCardId === card.id && deck && (
+                  <View style={styles.bucketPickerRow}>
+                    {deck.bucket_intervals_days.map((_, i) => {
+                      const active = cardStates.get(card.id)?.bucket_index === i;
+                      return (
+                        <Pressable
+                          key={i}
+                          onPress={() => setBucket(card.id, i)}
+                          style={[styles.bucketBtn, active && styles.bucketBtnActive]}>
+                          <ThemedText>{bucketLetter(i)}</ThemedText>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
               </ThemedView>
             ),
           )}
@@ -360,6 +533,14 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: { padding: Spacing.four, gap: Spacing.three },
   centered: { alignItems: 'center', justifyContent: 'center' },
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    gap: Spacing.three,
+  },
+  flex1: { flex: 1 },
+  deckEditMultiline: { minHeight: 60, textAlignVertical: 'top' },
   section: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two },
   input: {
     fontSize: 16,
@@ -386,13 +567,29 @@ const styles = StyleSheet.create({
   addBtnDisabled: { opacity: 0.5 },
   addBtnText: { color: '#ffffff', fontWeight: '600' },
   cardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     padding: Spacing.three,
     borderRadius: Spacing.two,
     gap: Spacing.three,
   },
+  cardRowMain: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   cardText: { flex: 1, gap: Spacing.half },
+  bucketChip: {
+    paddingVertical: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#888',
+  },
+  bucketPickerRow: { flexDirection: 'row', gap: Spacing.two, paddingTop: Spacing.two },
+  bucketBtn: {
+    flex: 1,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: '#888',
+    alignItems: 'center',
+  },
+  bucketBtnActive: { backgroundColor: '#3c87f720', borderColor: '#3c87f7' },
   rowActions: { flexDirection: 'row', gap: Spacing.three, alignItems: 'center' },
   editButtons: { flexDirection: 'row', gap: Spacing.three, justifyContent: 'flex-end' },
   cancelBtn: { paddingVertical: Spacing.two, paddingHorizontal: Spacing.three },

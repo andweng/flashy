@@ -14,8 +14,8 @@ import {
   bucketLetter,
   checkTypedAnswer,
   owedReviews,
-  todayInTz,
 } from '@/lib/leitner';
+import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Deck } from '@/types/domain';
 
 type QueueItem = {
@@ -46,7 +46,7 @@ export default function ReviewScreen() {
     void (async () => {
       const parent = await db.getCurrentParent();
       const tz = parent?.timezone ?? 'UTC';
-      const _today = todayInTz(tz);
+      const _today = getEffectiveToday(tz);
       setToday(_today);
 
       const due = await db.listDueCardStatesForChild(child.id, _today);
@@ -131,6 +131,8 @@ export default function ReviewScreen() {
     setRevealed(true);
   }
 
+  const noBack = current.card.grading_mode === 'self_grade' && current.card.back.trim() === '';
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safe}>
@@ -147,7 +149,7 @@ export default function ReviewScreen() {
             {current.card.front}
           </ThemedText>
 
-          {current.card.grading_mode === 'self_grade' && revealed && (
+          {current.card.grading_mode === 'self_grade' && revealed && current.card.back && (
             <ThemedText type="subtitle" style={styles.back}>
               {current.card.back}
             </ThemedText>
@@ -166,10 +168,10 @@ export default function ReviewScreen() {
         </ThemedView>
 
         <View style={styles.actions}>
-          {current.card.grading_mode === 'self_grade' && !revealed && (
+          {current.card.grading_mode === 'self_grade' && !revealed && !noBack && (
             <PrimaryButton label="Show answer" onPress={() => setRevealed(true)} />
           )}
-          {current.card.grading_mode === 'self_grade' && revealed && (
+          {current.card.grading_mode === 'self_grade' && (revealed || noBack) && (
             <View style={styles.dualButtons}>
               <ResultButton label="Missed" tone="fail" onPress={() => recordAndAdvance('fail', null)} />
               <ResultButton label="Got it" tone="pass" onPress={() => recordAndAdvance('pass', null)} />

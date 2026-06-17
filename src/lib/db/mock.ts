@@ -2,6 +2,7 @@
 // Swap to a Supabase-backed impl in lib/db/index.ts when ready.
 
 import { addDays } from '@/lib/leitner';
+import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
@@ -106,6 +107,9 @@ export const mockDB: DB = {
   async listChildren(parentId) {
     return children.filter((c) => c.parent_id === parentId);
   },
+  async getChild(id) {
+    return children.find((c) => c.id === id) ?? null;
+  },
   async createChild(input) {
     const child: Child = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -113,6 +117,23 @@ export const mockDB: DB = {
     };
     children.push(child);
     return child;
+  },
+  async updateChild(id, patch) {
+    const idx = children.findIndex((c) => c.id === id);
+    if (idx < 0) throw new Error('Child not found');
+    children[idx] = { ...children[idx], ...patch };
+    return children[idx];
+  },
+  async deleteChild(id) {
+    // Cascade: drop card_states, deck_assignments, then the child itself.
+    for (let i = states.length - 1; i >= 0; i--) {
+      if (states[i].child_id === id) states.splice(i, 1);
+    }
+    for (let i = assignments.length - 1; i >= 0; i--) {
+      if (assignments[i].child_id === id) assignments.splice(i, 1);
+    }
+    const idx = children.findIndex((c) => c.id === id);
+    if (idx >= 0) children.splice(idx, 1);
   },
   async listDecksForParent(parentId) {
     return decks.filter((d) => d.parent_id === parentId);
@@ -166,7 +187,7 @@ export const mockDB: DB = {
     };
     cards.push(card);
     // Fan out card_states to children already assigned to this deck.
-    const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+    const today = getEffectiveToday();
     for (const a of assignments.filter((a) => a.deck_id === input.deck_id)) {
       states.push({
         child_id: a.child_id,
@@ -201,7 +222,7 @@ export const mockDB: DB = {
     if (assignments.some((a) => a.deck_id === deckId && a.child_id === childId)) return;
     assignments.push({ deck_id: deckId, child_id: childId });
     // Fan out card_states for existing cards in this deck.
-    const today = new Intl.DateTimeFormat('en-CA').format(new Date());
+    const today = getEffectiveToday();
     const deckCards = cards.filter((c) => c.deck_id === deckId);
     for (const card of deckCards) {
       const exists = states.some((s) => s.child_id === childId && s.card_id === card.id);
@@ -231,6 +252,9 @@ export const mockDB: DB = {
         const deck = decks.find((d) => d.id === card.deck_id)!;
         return { ...s, card, deck };
       });
+  },
+  async listCardStatesForChild(childId) {
+    return states.filter((s) => s.child_id === childId);
   },
   async upsertCardState(s) {
     const idx = states.findIndex((x) => x.child_id === s.child_id && x.card_id === s.card_id);

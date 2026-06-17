@@ -8,6 +8,37 @@ export function bucketLetter(index: number): string {
   return String.fromCharCode(65 + index);
 }
 
+// Parses a comma- or space-separated list like "1, 3, 7, 11, 19" into intervals.
+// Each value must be a positive integer; 2–10 values total (one per bucket).
+export function parseIntervalsList(s: string): number[] {
+  const parts = s.split(/[,\s]+/).filter((p) => p.length > 0);
+  if (parts.length === 0) throw new Error('Enter at least one interval.');
+  if (parts.length < 2 || parts.length > 10) {
+    throw new Error('Provide 2–10 intervals (one per bucket).');
+  }
+  const out: number[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const n = Number(parts[i]);
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error(`Interval ${i + 1} ("${parts[i]}") must be a positive integer.`);
+    }
+    out.push(n);
+  }
+  return out;
+}
+
+// Which bucket indexes would be tested on day N of a fresh-start schedule,
+// assuming every card was added on day 0 and never failed. Day 0 = setup day
+// (nothing tested yet); day N tests bucket i iff N is a multiple of intervals[i].
+export function bucketsTestedOnDay(dayN: number, intervals: number[]): number[] {
+  if (dayN <= 0) return [];
+  const out: number[] = [];
+  for (let i = 0; i < intervals.length; i++) {
+    if (intervals[i] > 0 && dayN % intervals[i] === 0) out.push(i);
+  }
+  return out;
+}
+
 export function todayInTz(timezone: string, now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now);
 }

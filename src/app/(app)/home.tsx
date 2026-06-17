@@ -8,7 +8,8 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
-import { owedReviews, todayInTz } from '@/lib/leitner';
+import { owedReviews } from '@/lib/leitner';
+import { getEffectiveToday } from '@/lib/today';
 
 type DeckSummary = { id: string; name: string; due: number };
 
@@ -21,7 +22,7 @@ export default function HomeScreen() {
     if (!child) return;
     void (async () => {
       const parent = await db.getCurrentParent();
-      const today = todayInTz(parent?.timezone ?? 'UTC');
+      const today = getEffectiveToday(parent?.timezone ?? 'UTC');
       const due = await db.listDueCardStatesForChild(child.id, today);
 
       const byDeck = new Map<string, DeckSummary>();
