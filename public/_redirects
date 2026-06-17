@@ -1,5 +1,7 @@
-# Cloudflare Pages SPA fallback: requests to paths that don't match a static
-# file fall through to index.html, then Expo Router's client-side routing
-# resolves the URL (including dynamic routes like /decks/<id>).
-# Existing static files (e.g. /home.html, /sw.js, /icon.png) are served as-is.
-/*    /index.html   200
+# SPA fallback for dynamic deck routes (/decks/<id>).
+# Static files (e.g. /home.html, /decks.html, /decks/new.html, /sw.js) are
+# served as-is because Cloudflare Pages checks for existing files before
+# evaluating redirect rules. Only paths under /decks/ that have no matching
+# file fall through to index.html, where Expo Router's client-side routing
+# reads location.pathname and renders /decks/[id].
+/decks/*    /index.html   200
