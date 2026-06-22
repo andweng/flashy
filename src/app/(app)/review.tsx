@@ -130,6 +130,16 @@ export default function ReviewScreen() {
     setTypedResult(null);
   }
 
+  // Defer the current card: rotate it to the end of the queue and show the next.
+  function moveToBack() {
+    if (!items || items.length - index <= 1) return;
+    const cur = items[index];
+    setItems([...items.slice(0, index), ...items.slice(index + 1), cur]);
+    setRevealed(false);
+    setTypedInput('');
+    setTypedResult(null);
+  }
+
   function checkTyped() {
     const correct = checkTypedAnswer(current.card, typedInput);
     setTypedResult(correct ? 'correct' : 'wrong');
@@ -193,6 +203,13 @@ export default function ReviewScreen() {
               <ResultButton label="Missed" tone="fail" onPress={() => recordAndAdvance('fail', typedInput)} />
               <ResultButton label="I had it" tone="pass" onPress={() => recordAndAdvance('pass', typedInput)} />
             </View>
+          )}
+          {items.length - index > 1 && (
+            <Pressable style={styles.skipBtn} onPress={moveToBack}>
+              <ThemedText themeColor="textSecondary" type="small">
+                Move to back ↪
+              </ThemedText>
+            </Pressable>
           )}
         </View>
       </SafeAreaView>
@@ -341,6 +358,7 @@ const styles = StyleSheet.create({
   front: { textAlign: 'center' },
   back: { textAlign: 'center' },
   actions: { gap: Spacing.three },
+  skipBtn: { alignItems: 'center', paddingVertical: Spacing.two },
   dualButtons: { flexDirection: 'row', gap: Spacing.three },
   button: {
     flex: 1,

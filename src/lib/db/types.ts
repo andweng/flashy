@@ -32,7 +32,13 @@ export interface DB {
 
   listDueCardStatesForChild(childId: string, today: string): Promise<CardStateWithCard[]>;
   listCardStatesForChild(childId: string): Promise<CardState[]>;
+  countDueCardsForChild(childId: string, today: string): Promise<number>;
   upsertCardState(state: CardState): Promise<void>;
 
   recordReview(input: Omit<Review, 'id' | 'reviewed_at'>): Promise<Review>;
+  // Undo every review this child did today: revert each touched card to the
+  // bucket/due-date it had before today and delete today's review rows.
+  // Returns the number of cards reverted. `today` is the effective today;
+  // `timezone` is the parent's IANA zone (for matching real review timestamps).
+  resetTodaysReviewsForChild(childId: string, today: string, timezone: string): Promise<number>;
 }

@@ -1,7 +1,7 @@
 // In-memory mock DB used while building UI. Reads/writes a fixture set.
 // Swap to a Supabase-backed impl in lib/db/index.ts when ready.
 
-import { addDays } from '@/lib/leitner';
+import { addDays, todayInTz } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
@@ -256,6 +256,11 @@ export const mockDB: DB = {
   async listCardStatesForChild(childId) {
     return states.filter((s) => s.child_id === childId);
   },
+  async countDueCardsForChild(childId, today) {
+    return states.filter(
+      (s) => s.child_id === childId && s.next_due_on <= today && !s.graduated_at,
+    ).length;
+  },
   async upsertCardState(s) {
     const idx = states.findIndex((x) => x.child_id === s.child_id && x.card_id === s.card_id);
     if (idx >= 0) states[idx] = s;
@@ -269,5 +274,42 @@ export const mockDB: DB = {
     };
     reviews.push(review);
     return review;
+  },
+  async resetTodaysReviewsForChild(childId, today, timezone) {
+    const realToday = todayInTz(timezone);
+    const todays = reviews
+      .filter(
+        (r) =>
+          r.child_id === childId &&
+          todayInTz(timezone, new Date(r.reviewed_at)) === realToday,
+      )
+      .sort((a, b) => a.reviewed_at.localeCompare(b.reviewed_at));
+    if (todays.length === 0) return 0;
+
+    const bucketBefore = new Map<string, number>();
+    for (const r of todays) {
+      if (!bucketBefore.has(r.card_id)) bucketBefore.set(r.card_id, r.bucket_before);
+    }
+
+    for (const [cardId, bucket] of bucketBefore) {
+      const idx = states.findIndex((s) => s.child_id === childId && s.card_id === cardId);
+      if (idx >= 0) {
+        states[idx] = {
+          ...states[idx],
+          bucket_index: bucket,
+          next_due_on: today,
+          consecutive_passes_in_top_bucket: 0,
+          graduated_at: null,
+          last_reviewed_at: null,
+        };
+      }
+    }
+
+    const ids = new Set(todays.map((r) => r.id));
+    for (let i = reviews.length - 1; i >= 0; i--) {
+      if (ids.has(reviews[i].id)) reviews.splice(i, 1);
+    }
+
+    return bucketBefore.size;
   },
 };

@@ -32,6 +32,10 @@ export default function SettingsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
+  const [resetting, setResetting] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetFeedback, setResetFeedback] = useState<string | null>(null);
+
   // Day offset (used for migrating a child mid-cycle / previewing the schedule)
   const [dayInput, setDayInput] = useState<string>(String(getDayOffset()));
   const [dayError, setDayError] = useState<string | null>(null);
@@ -116,6 +120,34 @@ export default function SettingsScreen() {
     return Number.isFinite(n) && n >= 0 ? n : 0;
   })();
   const previewBuckets = bucketsTestedOnDay(previewDay, DEFAULT_BUCKET_INTERVALS);
+
+  async function handleReset() {
+    if (!child) return;
+    if (!confirmingReset) {
+      setConfirmingReset(true);
+      return;
+    }
+    setResetting(true);
+    setError(null);
+    setResetFeedback(null);
+    try {
+      const parent = await db.getCurrentParent();
+      const tz = parent?.timezone ?? 'UTC';
+      const today = getEffectiveToday(tz);
+      const n = await db.resetTodaysReviewsForChild(child.id, today, tz);
+      setResetFeedback(
+        n === 0
+          ? 'No reviews from today to reset.'
+          : `Reset ${n} card${n === 1 ? '' : 's'} to the start of today.`,
+      );
+      setTimeout(() => setResetFeedback(null), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reset today.');
+    } finally {
+      setResetting(false);
+      setConfirmingReset(false);
+    }
+  }
 
   async function handleDelete() {
     if (!child) return;
@@ -250,6 +282,27 @@ export default function SettingsScreen() {
             {dayFeedback && (
               <ThemedText themeColor="textSecondary" type="small">{dayFeedback}</ThemedText>
             )}
+          </ThemedView>
+
+          {/* Today's review */}
+          <ThemedText type="smallBold">Today&apos;s review</ThemedText>
+          <ThemedView type="backgroundElement" style={styles.section}>
+            <ThemedText themeColor="textSecondary" type="small">
+              Undo all of {child.display_name}&apos;s reviews from today — cards go back to the
+              bucket and due date they had this morning, and today&apos;s history is cleared.
+            </ThemedText>
+            {resetFeedback && (
+              <ThemedText themeColor="textSecondary" type="small">{resetFeedback}</ThemedText>
+            )}
+            <Pressable style={styles.outlineBtn} onPress={handleReset} disabled={resetting}>
+              <ThemedText>
+                {resetting
+                  ? '…'
+                  : confirmingReset
+                    ? "Tap again to reset today's cards"
+                    : "Reset today's cards"}
+              </ThemedText>
+            </Pressable>
           </ThemedView>
 
           {/* Danger */}

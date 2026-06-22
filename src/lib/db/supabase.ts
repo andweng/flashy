@@ -3,6 +3,7 @@
 // where the API takes it as input.
 
 import { supabase } from '@/lib/supabase';
+import { addDays, todayInTz } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
@@ -286,5 +287,67 @@ export const supabaseDB: DB = {
       .single();
     if (error) throw error;
     return data as Review;
+  },
+
+  async countDueCardsForChild(childId, today): Promise<number> {
+    const { count, error } = await supabase
+      .from('card_states')
+      .select('card_id', { count: 'exact', head: true })
+      .eq('child_id', childId)
+      .is('graduated_at', null)
+      .lte('next_due_on', today);
+    if (error) throw error;
+    return count ?? 0;
+  },
+
+  async resetTodaysReviewsForChild(childId, today, timezone): Promise<number> {
+    // Reviews carry real wall-clock timestamps, so match against the real
+    // calendar day in the parent's timezone (not the possibly dev-offset
+    // `today`). Pull a coarse 1-day window, then filter to the exact tz date.
+    const realToday = todayInTz(timezone);
+    const sinceIso = `${addDays(realToday, -1)}T00:00:00.000Z`;
+    const { data: recent, error } = await supabase
+      .from('reviews')
+      .select('id, card_id, bucket_before, reviewed_at')
+      .eq('child_id', childId)
+      .gte('reviewed_at', sinceIso)
+      .order('reviewed_at', { ascending: true });
+    if (error) throw error;
+
+    const todays = (recent ?? []).filter(
+      (r) => todayInTz(timezone, new Date(r.reviewed_at as string)) === realToday,
+    );
+    if (todays.length === 0) return 0;
+
+    // The earliest review of the day holds the bucket the card had this morning.
+    const bucketBefore = new Map<string, number>();
+    for (const r of todays) {
+      if (!bucketBefore.has(r.card_id as string)) {
+        bucketBefore.set(r.card_id as string, r.bucket_before as number);
+      }
+    }
+
+    for (const [cardId, bucket] of bucketBefore) {
+      const { error: upErr } = await supabase
+        .from('card_states')
+        .update({
+          bucket_index: bucket,
+          next_due_on: today,
+          consecutive_passes_in_top_bucket: 0,
+          graduated_at: null,
+          last_reviewed_at: null,
+        })
+        .eq('child_id', childId)
+        .eq('card_id', cardId);
+      if (upErr) throw upErr;
+    }
+
+    const { error: delErr } = await supabase
+      .from('reviews')
+      .delete()
+      .in('id', todays.map((r) => r.id));
+    if (delErr) throw delErr;
+
+    return bucketBefore.size;
   },
 };

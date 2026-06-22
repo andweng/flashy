@@ -10,7 +10,29 @@
       "Read(//tmp/**)",
       "Bash(mv /tmp/flashy-supabase-stash /Users/aweng/Projects/flashy/supabase)",
       "Bash(mv /tmp/flashy-claude-stash /Users/aweng/Projects/flashy/.claude)",
-      "Bash(chmod +x /Users/aweng/Projects/flashy/infra/supabase/bootstrap.sh /Users/aweng/Projects/flashy/infra/supabase/apply-migration.sh)"
+      "Bash(chmod +x /Users/aweng/Projects/flashy/infra/supabase/bootstrap.sh /Users/aweng/Projects/flashy/infra/supabase/apply-migration.sh)",
+      "Bash(npx wrangler *)",
+      "Bash(npm run *)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(dig +short flashy.weng.dev)",
+      "Bash(curl -sS -D - -o /tmp/flashy_root.html https://flashy.weng.dev/)",
+      "Bash(curl -sS -o /dev/null -w \"status=%{http_code}\\\\n\" https://flashy.weng.dev/home)",
+      "Bash(dig +short NS weng.dev)",
+      "Bash(dig +short flashy.weng.dev @1.1.1.1)",
+      "Bash(dig +short flashy.weng.dev @8.8.8.8)",
+      "Bash(dig flashy.weng.dev @1.1.1.1 ANY +short)",
+      "Bash(dig +short weng.dev @1.1.1.1)",
+      "Bash(curl -sS -D - -o /tmp/d.html --resolve flashy.weng.dev:443:104.21.44.181 \"https://flashy.weng.dev/decks/some-uuid-123\")",
+      "Bash(curl -sS --resolve flashy.weng.dev:443:104.21.44.181 \"https://flashy.weng.dev/_redirects\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(curl -sS \"https://flashy.pages.dev/\")",
+      "Bash(curl -sS -o /dev/null -w '%{http_code}' 'https://flashy.pages.dev/zzz-nonsense-xyz')",
+      "Bash(echo \"  /zzz-nonsense-xyz -> $\\(curl -sS -o /dev/null -w '%{http_code}' 'https://flashy.pages.dev/zzz-nonsense-xyz'\\)\")",
+      "Bash(curl -sS 'https://flashy.pages.dev/')",
+      "Bash(echo \"  _expo refs: $\\(curl -sS 'https://flashy.pages.dev/')",
+      "Bash(npx tsc *)"
     ]
   }
 }

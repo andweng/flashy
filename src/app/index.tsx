@@ -10,6 +10,7 @@ import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
+import { getEffectiveToday } from '@/lib/today';
 import type { Child } from '@/types/domain';
 
 export default function ProfilePicker() {
@@ -17,6 +18,7 @@ export default function ProfilePicker() {
   const router = useRouter();
   const { setChild } = useCurrentChild();
   const [children, setChildren] = useState<Child[] | null>(null);
+  const [dueByChild, setDueByChild] = useState<Record<string, number>>({});
 
   useFocusEffect(
     useCallback(() => {
@@ -30,6 +32,15 @@ export default function ProfilePicker() {
         }
         const list = await db.listChildren(parent.id);
         if (!cancelled) setChildren(list);
+
+        // Tally each child's cards due today for the "needs review" dot.
+        const today = getEffectiveToday(parent.timezone);
+        const counts = await Promise.all(
+          list.map((c) => db.countDueCardsForChild(c.id, today).catch(() => 0)),
+        );
+        if (!cancelled) {
+          setDueByChild(Object.fromEntries(list.map((c, i) => [c.id, counts[i]])));
+        }
       })();
       return () => {
         cancelled = true;
@@ -72,6 +83,13 @@ export default function ProfilePicker() {
               }}>
               <ThemedView type="backgroundElement" style={styles.avatarTile}>
                 <ThemedText style={styles.avatar}>{c.avatar ?? '🙂'}</ThemedText>
+                {dueByChild[c.id] > 0 && (
+                  <View style={styles.badge}>
+                    <ThemedText style={styles.badgeText}>
+                      {dueByChild[c.id] > 99 ? '99+' : dueByChild[c.id]}
+                    </ThemedText>
+                  </View>
+                )}
               </ThemedView>
               <ThemedText type="subtitle">{c.display_name}</ThemedText>
             </Pressable>
@@ -115,4 +133,17 @@ const styles = StyleSheet.create({
   },
   avatar: { fontSize: 72 },
   avatarPlus: { fontSize: 56, opacity: 0.6 },
+  badge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    backgroundColor: '#d2433f',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
 });
