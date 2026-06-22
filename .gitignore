@@ -41,3 +41,6 @@ example
 # generated native folders
 /ios
 /android
+
+# Personal scratch data, not for the repo
+evan.csv
