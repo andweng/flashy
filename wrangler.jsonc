@@ -1,0 +1,14 @@
+{
+  // Serves the Expo static web export (./dist) as a Cloudflare Worker with
+  // static assets. `name` must match the existing Worker so deploys land on it
+  // and keep the flashy.weng.dev custom domain.
+  "name": "flashy",
+  "compatibility_date": "2026-06-21",
+  "assets": {
+    "directory": "./dist",
+    // Unmatched paths (e.g. /decks/<id>) return index.html with 200 so the
+    // Expo Router client renders the route. Replaces the Pages-only
+    // _redirects / app.html SPA-fallback trick.
+    "not_found_handling": "single-page-application"
+  }
+}
