@@ -60,11 +60,16 @@ export default function ReviewScreen() {
       const queue: QueueItem[] = [];
       for (const s of due) {
         const owed = owedReviews(s, s.deck, _today);
+        // Strip the joined card/deck objects so `state` is a pure CardState.
+        // Otherwise they ride along through applyReview's spread into the
+        // card_states upsert as non-existent columns, which Supabase rejects —
+        // silently aborting recordAndAdvance so grading taps did nothing.
+        const { card, deck, ...state } = s;
         for (let i = 0; i < owed; i++) {
           queue.push({
-            state: s,
-            card: s.card,
-            deck: s.deck,
+            state,
+            card,
+            deck,
             owedAtStart: owed,
             position: i,
           });
@@ -332,16 +337,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.four,
-    // Clip content so an over-tall card (long answer on a short screen) can't
-    // spill out of its box and cover the action buttons below, which was
-    // eating taps on the top of "Got it" / "Missed" on mobile web.
-    overflow: 'hidden',
   },
   front: { textAlign: 'center' },
   back: { textAlign: 'center' },
-  // zIndex keeps the buttons above the card area in stacking order so they
-  // always receive taps even if anything above them overdraws.
-  actions: { gap: Spacing.three, zIndex: 1 },
+  actions: { gap: Spacing.three },
   dualButtons: { flexDirection: 'row', gap: Spacing.three },
   button: {
     flex: 1,
