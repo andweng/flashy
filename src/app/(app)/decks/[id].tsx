@@ -34,6 +34,8 @@ export default function DeckDetailScreen() {
   const [front, setFront] = useState('');
   const [back, setBack] = useState('');
   const [mode, setMode] = useState<GradingMode>('self_grade');
+  // Sticky across adds — picking E once lets you batch-add E cards
+  const [addBucket, setAddBucket] = useState(0);
   const [addPending, setAddPending] = useState(false);
 
   // Inline deck editing (name + description)
@@ -90,13 +92,26 @@ export default function DeckDetailScreen() {
     if (mode === 'typed' && !b) return;
     setAddPending(true);
     try {
-      await db.createCard({
+      const created = await db.createCard({
         deck_id: deck.id,
         front: f,
         back: b,
         grading_mode: mode,
         typed_alternates: [],
       });
+      // Per-child bucket state only applies when a child is selected
+      if (currentChild) {
+        const today = getEffectiveToday();
+        await db.upsertCardState({
+          child_id: currentChild.id,
+          card_id: created.id,
+          bucket_index: addBucket,
+          next_due_on: today,
+          consecutive_passes_in_top_bucket: 0,
+          graduated_at: null,
+          last_reviewed_at: null,
+        });
+      }
       setFront('');
       setBack('');
       await refresh();
@@ -372,6 +387,22 @@ export default function DeckDetailScreen() {
                 <ThemedText type="small">Typed</ThemedText>
               </Pressable>
             </View>
+            {currentChild && deck && (
+              <View style={styles.addBucketGroup}>
+                <ThemedText type="small">Start bucket</ThemedText>
+                <View style={styles.bucketPickerRow}>
+                  {deck.bucket_intervals_days.map((_, i) => (
+                    <Pressable
+                      key={i}
+                      onPress={() => setAddBucket(i)}
+                      disabled={addPending}
+                      style={[styles.bucketBtn, addBucket === i && styles.bucketBtnActive]}>
+                      <ThemedText>{bucketLetter(i)}</ThemedText>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            )}
             <Pressable
               style={[
                 styles.addBtn,
@@ -559,6 +590,7 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
   },
   modeRow: { flexDirection: 'row', gap: Spacing.two },
+  addBucketGroup: { gap: Spacing.two },
   modeChip: {
     paddingVertical: Spacing.one,
     paddingHorizontal: Spacing.three,
