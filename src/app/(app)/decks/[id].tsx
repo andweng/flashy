@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -30,6 +30,7 @@ export default function DeckDetailScreen() {
   const [bucketPickerCardId, setBucketPickerCardId] = useState<string | null>(null);
 
   // Quick-add form
+  const frontRef = useRef<TextInput>(null);
   const [front, setFront] = useState('');
   const [back, setBack] = useState('');
   const [mode, setMode] = useState<GradingMode>('self_grade');
@@ -101,6 +102,8 @@ export default function DeckDetailScreen() {
       await refresh();
     } finally {
       setAddPending(false);
+      // Return cursor to Front for smooth back-to-back entry
+      requestAnimationFrame(() => frontRef.current?.focus());
     }
   }
 
@@ -335,11 +338,16 @@ export default function DeckDetailScreen() {
           <ThemedView type="backgroundElement" style={styles.section}>
             <ThemedText type="smallBold">Add card</ThemedText>
             <TextInput
+              ref={frontRef}
               value={front}
               onChangeText={setFront}
               placeholder="Front"
               placeholderTextColor={theme.textSecondary}
               editable={!addPending}
+              autoFocus
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={addCard}
               style={[styles.input, { color: theme.text, borderColor: theme.textSecondary }]}
             />
             <TextInput
@@ -348,6 +356,7 @@ export default function DeckDetailScreen() {
               placeholder={mode === 'typed' ? 'Back (the answer)' : 'Back (optional)'}
               placeholderTextColor={theme.textSecondary}
               editable={!addPending}
+              blurOnSubmit={false}
               onSubmitEditing={addCard}
               style={[styles.input, { color: theme.text, borderColor: theme.textSecondary }]}
             />
