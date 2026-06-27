@@ -50,12 +50,6 @@ export default function ReviewScreen() {
       setToday(_today);
 
       const due = await db.listDueCardStatesForChild(child.id, _today);
-      due.sort(
-        (a, b) =>
-          a.bucket_index - b.bucket_index ||
-          a.deck.name.localeCompare(b.deck.name) ||
-          a.card.front.localeCompare(b.card.front),
-      );
 
       const queue: QueueItem[] = [];
       for (const s of due) {
@@ -74,6 +68,12 @@ export default function ReviewScreen() {
             position: i,
           });
         }
+      }
+      // Randomize order so cards due today aren't always played in the same
+      // bucket/deck/alphabetical sequence. Fisher-Yates in place.
+      for (let i = queue.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [queue[i], queue[j]] = [queue[j], queue[i]];
       }
       setItems(queue);
     })();
