@@ -3,7 +3,7 @@
 
 import { addDays, todayInTz } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
-import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domain';
+import type { Card, CardState, Child, Deck, GradingMode, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
 // Computed at module load so mock "due today" stays relative to the calendar.
@@ -16,8 +16,8 @@ const parent: Parent = {
 };
 
 const children: Child[] = [
-  { id: 'c1', parent_id: 'p1', display_name: 'Mira', avatar: '🦊', graduate_after_passes: null },
-  { id: 'c2', parent_id: 'p1', display_name: 'Eli', avatar: '🐻', graduate_after_passes: 3 },
+  { id: 'c1', parent_id: 'p1', display_name: 'Mira', avatar: '🦊', graduate_after_passes: null, day_offset: 0 },
+  { id: 'c2', parent_id: 'p1', display_name: 'Eli', avatar: '🐻', graduate_after_passes: 3, day_offset: 0 },
 ];
 
 const decks: Deck[] = [
@@ -38,8 +38,9 @@ const makeCard = (
   deck_id: string,
   front: string,
   back: string,
-  grading_mode: 'self_grade' | 'typed' = 'self_grade',
+  grading_mode: GradingMode = 'self_grade',
   typed_alternates: string[] = [],
+  choices: string[] = [],
 ): Card => ({
   id: `card-${++cardSeq}`,
   deck_id,
@@ -47,6 +48,7 @@ const makeCard = (
   back,
   grading_mode,
   typed_alternates,
+  choices,
 });
 
 const cards: Card[] = [
@@ -245,21 +247,34 @@ export const mockDB: DB = {
     // card_states are kept — re-assignment preserves progress.
   },
   async listDueCardStatesForChild(childId, today): Promise<CardStateWithCard[]> {
+    // Only play decks currently in this child's rotation. card_states linger
+    // after a deck is unassigned (to preserve progress) and can also be created
+    // for unassigned decks via the deck editor, so gating purely on child_id
+    // would leak cross-deck cards into review.
+    const assignedDeckIds = new Set(
+      assignments.filter((a) => a.child_id === childId).map((a) => a.deck_id),
+    );
     return states
       .filter((s) => s.child_id === childId && s.next_due_on <= today && !s.graduated_at)
       .map((s) => {
         const card = cards.find((c) => c.id === s.card_id)!;
         const deck = decks.find((d) => d.id === card.deck_id)!;
         return { ...s, card, deck };
-      });
+      })
+      .filter((row) => assignedDeckIds.has(row.deck.id));
   },
   async listCardStatesForChild(childId) {
     return states.filter((s) => s.child_id === childId);
   },
   async countDueCardsForChild(childId, today) {
-    return states.filter(
-      (s) => s.child_id === childId && s.next_due_on <= today && !s.graduated_at,
-    ).length;
+    const assignedDeckIds = new Set(
+      assignments.filter((a) => a.child_id === childId).map((a) => a.deck_id),
+    );
+    return states.filter((s) => {
+      if (s.child_id !== childId || s.next_due_on > today || s.graduated_at) return false;
+      const card = cards.find((c) => c.id === s.card_id);
+      return card ? assignedDeckIds.has(card.deck_id) : false;
+    }).length;
   },
   async upsertCardState(s) {
     const idx = states.findIndex((x) => x.child_id === s.child_id && x.card_id === s.card_id);

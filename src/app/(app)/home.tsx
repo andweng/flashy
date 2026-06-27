@@ -22,7 +22,7 @@ export default function HomeScreen() {
     if (!child) return;
     void (async () => {
       const parent = await db.getCurrentParent();
-      const today = getEffectiveToday(parent?.timezone ?? 'UTC');
+      const today = getEffectiveToday(parent?.timezone ?? 'UTC', child.day_offset);
       const due = await db.listDueCardStatesForChild(child.id, today);
 
       const byDeck = new Map<string, DeckSummary>();

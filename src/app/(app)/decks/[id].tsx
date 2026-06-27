@@ -97,10 +97,11 @@ export default function DeckDetailScreen() {
         back: b,
         grading_mode: mode,
         typed_alternates: [],
+        choices: [],
       });
       // Per-child bucket state only applies when a child is selected
       if (currentChild) {
-        const today = getEffectiveToday();
+        const today = getEffectiveToday('UTC', currentChild.day_offset);
         await db.upsertCardState({
           child_id: currentChild.id,
           card_id: created.id,
@@ -189,7 +190,7 @@ export default function DeckDetailScreen() {
   async function setBucket(cardId: string, bucketIndex: number) {
     if (!currentChild || !deck) return;
     const existing = cardStates.get(cardId);
-    const today = getEffectiveToday();
+    const today = getEffectiveToday('UTC', currentChild.day_offset);
     const newState: CardState = {
       child_id: currentChild.id,
       card_id: cardId,
@@ -239,6 +240,7 @@ export default function DeckDetailScreen() {
           back: card.back,
           grading_mode: card.grading_mode,
           typed_alternates: card.typed_alternates,
+          choices: card.choices,
         });
       }
       router.push(`/decks/${newDeck.id}`);

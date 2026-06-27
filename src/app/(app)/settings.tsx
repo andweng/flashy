@@ -16,7 +16,7 @@ import {
   bucketsTestedOnDay,
   DEFAULT_BUCKET_INTERVALS,
 } from '@/lib/leitner';
-import { getDayOffset, getEffectiveToday, setDayOffset } from '@/lib/today';
+import { getEffectiveToday } from '@/lib/today';
 import type { CardState } from '@/types/domain';
 
 export default function SettingsScreen() {
@@ -46,12 +46,11 @@ export default function SettingsScreen() {
   const [confirmingDone, setConfirmingDone] = useState(false);
   const [doneFeedback, setDoneFeedback] = useState<string | null>(null);
 
-  // Day offset (used for migrating a child mid-cycle / previewing the schedule)
-  const [dayInput, setDayInput] = useState<string>(String(getDayOffset()));
+  // Day offset (used for migrating a child mid-cycle / previewing the schedule).
+  // Per-child: seeded from the child record below and persisted via updateChild.
+  const [dayInput, setDayInput] = useState<string>('0');
   const [dayError, setDayError] = useState<string | null>(null);
   const [dayFeedback, setDayFeedback] = useState<string | null>(null);
-  const [effectiveToday, setEffectiveToday] = useState<string>(getEffectiveToday());
-  const [appliedDay, setAppliedDay] = useState<number>(getDayOffset());
 
   useEffect(() => {
     if (!child) return;
@@ -62,9 +61,13 @@ export default function SettingsScreen() {
     setAvatar(child.avatar ?? AVATARS[0]);
     setGraduateEnabled(child.graduate_after_passes != null);
     setGraduateN(child.graduate_after_passes != null ? String(child.graduate_after_passes) : '3');
+    setDayInput(String(child.day_offset));
   }, [child]);
 
   if (!child) return null;
+
+  const appliedDay = child.day_offset;
+  const effectiveToday = getEffectiveToday('UTC', child.day_offset);
 
   const dirty =
     name.trim() !== child.display_name ||
@@ -100,6 +103,7 @@ export default function SettingsScreen() {
   }
 
   async function applyDayOffset() {
+    if (!child) return;
     setDayError(null);
     setDayFeedback(null);
     const parsed = parseInt(dayInput.trim(), 10);
@@ -108,9 +112,8 @@ export default function SettingsScreen() {
       return;
     }
     try {
-      await setDayOffset(parsed);
-      setAppliedDay(parsed);
-      setEffectiveToday(getEffectiveToday());
+      const updated = await db.updateChild(child.id, { day_offset: parsed });
+      setChild(updated);
       setDayFeedback(parsed === 0 ? 'Reset to real today.' : `Now treating today as day ${parsed}.`);
       setTimeout(() => setDayFeedback(null), 2000);
     } catch (e) {
@@ -119,12 +122,16 @@ export default function SettingsScreen() {
   }
 
   async function resetDayOffset() {
+    if (!child) return;
     setDayInput('0');
-    await setDayOffset(0);
-    setAppliedDay(0);
-    setEffectiveToday(getEffectiveToday());
-    setDayFeedback('Reset to real today.');
-    setTimeout(() => setDayFeedback(null), 2000);
+    try {
+      const updated = await db.updateChild(child.id, { day_offset: 0 });
+      setChild(updated);
+      setDayFeedback('Reset to real today.');
+      setTimeout(() => setDayFeedback(null), 2000);
+    } catch (e) {
+      setDayError(e instanceof Error ? e.message : 'Could not save.');
+    }
   }
 
   // Preview: which buckets would be tested on the entered day, using default Leitner doubling.

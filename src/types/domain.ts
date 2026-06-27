@@ -12,6 +12,9 @@ export type Child = {
   display_name: string;
   avatar: string | null;
   graduate_after_passes: number | null;
+  // How many days into their Leitner cycle this child is. Shifts their
+  // "effective today" forward (for migrating a child in mid-cycle). Per-child.
+  day_offset: number;
 };
 
 export type Deck = {
@@ -22,7 +25,7 @@ export type Deck = {
   bucket_intervals_days: number[];
 };
 
-export type GradingMode = 'self_grade' | 'typed';
+export type GradingMode = 'self_grade' | 'typed' | 'multiple_choice';
 
 export type Card = {
   id: string;
@@ -31,6 +34,9 @@ export type Card = {
   back: string;
   grading_mode: GradingMode;
   typed_alternates: string[];
+  // For multiple_choice cards: the options shown (including the correct one,
+  // which is `back`). Empty for other modes.
+  choices: string[];
 };
 
 export type CardState = {

@@ -62,6 +62,7 @@ export default function ImportDeckScreen() {
             back: c.back,
             grading_mode: c.grading_mode,
             typed_alternates: c.typed_alternates,
+            choices: c.choices,
           });
         }
         router.replace(`/decks/${deck.id}`);
@@ -84,6 +85,7 @@ export default function ImportDeckScreen() {
           back: c.back,
           grading_mode: c.grading_mode,
           typed_alternates: c.typed_alternates,
+          choices: c.choices,
         });
         created.push({ id: row.id, bucket: c.bucket });
       }
@@ -91,7 +93,7 @@ export default function ImportDeckScreen() {
       const hasBuckets = created.some((c) => c.bucket !== undefined);
       if (hasBuckets && child) {
         await db.assignDeckToChild(deck.id, child.id);
-        const today = getEffectiveToday();
+        const today = getEffectiveToday('UTC', child.day_offset);
         for (const c of created) {
           if (c.bucket === undefined) continue;
           await db.upsertCardState({

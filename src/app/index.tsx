@@ -33,9 +33,13 @@ export default function ProfilePicker() {
         if (!cancelled) setChildren(list);
 
         // Tally each child's cards due today for the "needs review" dot.
-        const today = getEffectiveToday(parent.timezone);
+        // Each child has their own day offset, so compute effective today per child.
         const counts = await Promise.all(
-          list.map((c) => db.countDueCardsForChild(c.id, today).catch(() => 0)),
+          list.map((c) =>
+            db
+              .countDueCardsForChild(c.id, getEffectiveToday(parent.timezone, c.day_offset))
+              .catch(() => 0),
+          ),
         );
         if (!cancelled) {
           setDueByChild(Object.fromEntries(list.map((c, i) => [c.id, counts[i]])));

@@ -1,7 +1,7 @@
 // Tolerant CSV parser for deck imports. Each row becomes a card.
 // Required column: front. Optional: back, grading_mode, typed_alternates (pipe-separated),
-// bucket (letter A-Z or 0-indexed integer). Header row is required and matched
-// case-insensitively.
+// choices (pipe-separated; for multiple_choice cards), bucket (letter A-Z or
+// 0-indexed integer). Header row is required and matched case-insensitively.
 
 import type { GradingMode } from '@/types/domain';
 
@@ -10,6 +10,7 @@ export type CSVImportCard = {
   back: string;
   grading_mode: GradingMode;
   typed_alternates: string[];
+  choices: string[];
   bucket?: number; // 0-indexed
 };
 
@@ -35,6 +36,7 @@ export function parseCSVImport(text: string, defaultMode: GradingMode): CSVImpor
   const backIdx = idx('back');
   const modeIdx = idx('grading_mode');
   const altsIdx = idx('typed_alternates');
+  const choicesIdx = idx('choices');
   const bucketIdx = idx('bucket');
 
   const cards: CSVImportCard[] = [];
@@ -50,6 +52,7 @@ export function parseCSVImport(text: string, defaultMode: GradingMode): CSVImpor
       const v = (row[modeIdx] ?? '').trim().toLowerCase().replace(/[-_\s]/g, '');
       if (v === 'typed') grading_mode = 'typed';
       else if (v === 'selfgrade' || v === 'self') grading_mode = 'self_grade';
+      else if (v === 'multiplechoice' || v === 'mc') grading_mode = 'multiple_choice';
       else if (v !== '') {
         throw new Error(`Row ${rowNum}: grading_mode "${row[modeIdx]}" is not recognized.`);
       }
@@ -58,6 +61,11 @@ export function parseCSVImport(text: string, defaultMode: GradingMode): CSVImpor
     const altsRaw = altsIdx >= 0 ? (row[altsIdx] ?? '').trim() : '';
     const typed_alternates = altsRaw
       ? altsRaw.split('|').map((s) => s.trim()).filter((s) => s.length > 0)
+      : [];
+
+    const choicesRaw = choicesIdx >= 0 ? (row[choicesIdx] ?? '').trim() : '';
+    const choices = choicesRaw
+      ? choicesRaw.split('|').map((s) => s.trim()).filter((s) => s.length > 0)
       : [];
 
     let bucket: number | undefined;
@@ -80,8 +88,19 @@ export function parseCSVImport(text: string, defaultMode: GradingMode): CSVImpor
     if (grading_mode === 'typed' && !back) {
       throw new Error(`Row ${rowNum}: typed cards require a back.`);
     }
+    if (grading_mode === 'multiple_choice') {
+      if (!back) {
+        throw new Error(`Row ${rowNum}: multiple_choice cards require a back (the correct answer).`);
+      }
+      if (choices.length < 2) {
+        throw new Error(`Row ${rowNum}: multiple_choice cards need at least 2 choices (pipe-separated).`);
+      }
+      if (!choices.includes(back)) {
+        throw new Error(`Row ${rowNum}: multiple_choice choices must include the back "${back}".`);
+      }
+    }
 
-    cards.push({ front, back, grading_mode, typed_alternates, bucket });
+    cards.push({ front, back, grading_mode, typed_alternates, choices, bucket });
   }
 
   if (cards.length === 0) throw new Error('No card rows found.');

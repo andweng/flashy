@@ -9,9 +9,9 @@ import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domai
 import type { CardStateWithCard, DB } from './types';
 
 const PARENT_COLS = 'id, display_name, timezone';
-const CHILD_COLS = 'id, parent_id, display_name, avatar, graduate_after_passes';
+const CHILD_COLS = 'id, parent_id, display_name, avatar, graduate_after_passes, day_offset';
 const DECK_COLS = 'id, parent_id, name, description, bucket_intervals_days';
-const CARD_COLS = 'id, deck_id, front, back, grading_mode, typed_alternates';
+const CARD_COLS = 'id, deck_id, front, back, grading_mode, typed_alternates, choices';
 const CARD_STATE_COLS =
   'child_id, card_id, bucket_index, next_due_on, consecutive_passes_in_top_bucket, graduated_at, last_reviewed_at';
 const REVIEW_COLS =
@@ -241,6 +241,18 @@ export const supabaseDB: DB = {
   },
 
   async listDueCardStatesForChild(childId, today): Promise<CardStateWithCard[]> {
+    // Restrict to decks currently assigned to this child. card_states persist
+    // after a deck is unassigned (to preserve progress) and can also be created
+    // for unassigned decks via the deck editor, so gating only on child_id would
+    // leak cross-deck cards into review.
+    const { data: assignRows, error: assignErr } = await supabase
+      .from('deck_assignments')
+      .select('deck_id')
+      .eq('child_id', childId);
+    if (assignErr) throw assignErr;
+    const assignedDeckIds = new Set((assignRows ?? []).map((r) => r.deck_id));
+    if (assignedDeckIds.size === 0) return [];
+
     const { data, error } = await supabase
       .from('card_states')
       .select(`
@@ -256,11 +268,13 @@ export const supabaseDB: DB = {
     if (error) throw error;
 
     type Row = CardState & { card: Card & { deck: Deck } };
-    return ((data as unknown as Row[]) ?? []).map((row) => {
-      const { card, ...stateFields } = row;
-      const { deck, ...cardFields } = card;
-      return { ...stateFields, card: cardFields, deck };
-    });
+    return ((data as unknown as Row[]) ?? [])
+      .map((row) => {
+        const { card, ...stateFields } = row;
+        const { deck, ...cardFields } = card;
+        return { ...stateFields, card: cardFields, deck };
+      })
+      .filter((row) => assignedDeckIds.has(row.deck.id));
   },
 
   async listCardStatesForChild(childId): Promise<CardState[]> {
@@ -290,14 +304,10 @@ export const supabaseDB: DB = {
   },
 
   async countDueCardsForChild(childId, today): Promise<number> {
-    const { count, error } = await supabase
-      .from('card_states')
-      .select('card_id', { count: 'exact', head: true })
-      .eq('child_id', childId)
-      .is('graduated_at', null)
-      .lte('next_due_on', today);
-    if (error) throw error;
-    return count ?? 0;
+    // Mirror listDueCardStatesForChild's assignment gating so the home badge
+    // doesn't count cards from decks no longer in the child's rotation.
+    const due = await supabaseDB.listDueCardStatesForChild(childId, today);
+    return due.length;
   },
 
   async resetTodaysReviewsForChild(childId, today, timezone): Promise<number> {

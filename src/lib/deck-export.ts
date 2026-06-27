@@ -1,7 +1,9 @@
 // Serializable deck format for sharing between parents.
 // Versioned so we can evolve the schema later without breaking older exports.
 
-import type { Card, Deck } from '@/types/domain';
+import type { Card, Deck, GradingMode } from '@/types/domain';
+
+const GRADING_MODES: readonly GradingMode[] = ['self_grade', 'typed', 'multiple_choice'];
 
 export const DECK_EXPORT_FORMAT = 'flashy-deck' as const;
 export const DECK_EXPORT_VERSION = 1 as const;
@@ -17,8 +19,9 @@ export type DeckExport = {
   cards: {
     front: string;
     back: string;
-    grading_mode: 'self_grade' | 'typed';
+    grading_mode: GradingMode;
     typed_alternates: string[];
+    choices: string[];
   }[];
 };
 
@@ -36,6 +39,7 @@ export function serializeDeck(deck: Deck, cards: Card[]): string {
       back: c.back,
       grading_mode: c.grading_mode,
       typed_alternates: c.typed_alternates,
+      choices: c.choices,
     })),
   };
   return JSON.stringify(payload, null, 2);
@@ -64,8 +68,8 @@ export function parseDeckExport(text: string): DeckExport {
     if (typeof card.front !== 'string' || typeof card.back !== 'string') {
       throw new Error('Each card must have string front and back.');
     }
-    if (card.grading_mode !== 'self_grade' && card.grading_mode !== 'typed') {
-      throw new Error('Each card grading_mode must be "self_grade" or "typed".');
+    if (!GRADING_MODES.includes(card.grading_mode as GradingMode)) {
+      throw new Error('Each card grading_mode must be "self_grade", "typed", or "multiple_choice".');
     }
   }
 
@@ -82,8 +86,9 @@ export function parseDeckExport(text: string): DeckExport {
     cards: (obj.cards as Record<string, unknown>[]).map((c) => ({
       front: c.front as string,
       back: c.back as string,
-      grading_mode: c.grading_mode as 'self_grade' | 'typed',
+      grading_mode: c.grading_mode as GradingMode,
       typed_alternates: Array.isArray(c.typed_alternates) ? (c.typed_alternates as string[]) : [],
+      choices: Array.isArray(c.choices) ? (c.choices as string[]) : [],
     })),
   };
 }

@@ -1,16 +1,11 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { AuthProvider } from '@/lib/auth';
 import { CurrentChildProvider } from '@/lib/current-child';
-import { initToday } from '@/lib/today';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  useEffect(() => {
-    void initToday();
-  }, []);
   return (
     <AuthProvider>
       <CurrentChildProvider>

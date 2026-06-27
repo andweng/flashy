@@ -46,7 +46,7 @@ export default function ReviewScreen() {
     void (async () => {
       const parent = await db.getCurrentParent();
       const tz = parent?.timezone ?? 'UTC';
-      const _today = getEffectiveToday(tz);
+      const _today = getEffectiveToday(tz, child.day_offset);
       setToday(_today);
 
       const due = await db.listDueCardStatesForChild(child.id, _today);
@@ -146,7 +146,10 @@ export default function ReviewScreen() {
     setRevealed(true);
   }
 
-  const noBack = current.card.grading_mode === 'self_grade' && current.card.back.trim() === '';
+  // Until dedicated multiple-choice UI exists, non-typed modes (self_grade and
+  // multiple_choice) share the reveal + self-grade flow. This keeps imported MC
+  // cards playable instead of soft-locking the session.
+  const noBack = current.card.grading_mode !== 'typed' && current.card.back.trim() === '';
 
   return (
     <ThemedView style={styles.container}>
@@ -164,7 +167,7 @@ export default function ReviewScreen() {
             {current.card.front}
           </ThemedText>
 
-          {current.card.grading_mode === 'self_grade' && revealed && current.card.back && (
+          {current.card.grading_mode !== 'typed' && revealed && current.card.back && (
             <ThemedText type="subtitle" style={styles.back}>
               {current.card.back}
             </ThemedText>
@@ -183,10 +186,10 @@ export default function ReviewScreen() {
         </ThemedView>
 
         <View style={styles.actions}>
-          {current.card.grading_mode === 'self_grade' && !revealed && !noBack && (
+          {current.card.grading_mode !== 'typed' && !revealed && !noBack && (
             <PrimaryButton label="Show answer" onPress={() => setRevealed(true)} />
           )}
-          {current.card.grading_mode === 'self_grade' && (revealed || noBack) && (
+          {current.card.grading_mode !== 'typed' && (revealed || noBack) && (
             <View style={styles.dualButtons}>
               <ResultButton label="Missed" tone="fail" onPress={() => recordAndAdvance('fail', null)} />
               <ResultButton label="Got it" tone="pass" onPress={() => recordAndAdvance('pass', null)} />
