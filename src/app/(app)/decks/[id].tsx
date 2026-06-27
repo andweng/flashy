@@ -12,7 +12,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { serializeDeck } from '@/lib/deck-export';
-import { bucketLetter } from '@/lib/leitner';
+import { bucketLetter, initialDueDate } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
 
@@ -106,7 +106,7 @@ export default function DeckDetailScreen() {
           child_id: currentChild.id,
           card_id: created.id,
           bucket_index: addBucket,
-          next_due_on: today,
+          next_due_on: initialDueDate(today, addBucket, deck.bucket_intervals_days),
           consecutive_passes_in_top_bucket: 0,
           graduated_at: null,
           last_reviewed_at: null,
@@ -188,14 +188,14 @@ export default function DeckDetailScreen() {
   }
 
   async function setBucket(cardId: string, bucketIndex: number) {
-    if (!currentChild) return;
+    if (!currentChild || !deck) return;
     const existing = cardStates.get(cardId);
     const today = getEffectiveToday();
     const newState: CardState = {
       child_id: currentChild.id,
       card_id: cardId,
       bucket_index: bucketIndex,
-      next_due_on: today,
+      next_due_on: initialDueDate(today, bucketIndex, deck.bucket_intervals_days),
       consecutive_passes_in_top_bucket: 0,
       graduated_at: null,
       last_reviewed_at: existing?.last_reviewed_at ?? null,

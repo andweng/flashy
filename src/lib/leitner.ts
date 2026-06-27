@@ -54,6 +54,15 @@ export function addDays(date: string, days: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+// Due date for a card freshly placed into a bucket. Bucket A (index 0) is due
+// immediately so brand-new cards enter today's rotation right away; any higher
+// bucket waits one full interval, so a card dropped straight into E isn't due
+// until its first E review comes around (rather than showing up today).
+export function initialDueDate(today: string, bucketIndex: number, intervals: number[]): string {
+  if (bucketIndex <= 0) return today;
+  return addDays(today, intervals[bucketIndex] ?? 1);
+}
+
 // How many reviews a card owes by `today`. 0 if not due, ≥1 if due (incl. backlog).
 export function owedReviews(state: CardState, deck: Deck, today: string): number {
   if (state.graduated_at) return 0;

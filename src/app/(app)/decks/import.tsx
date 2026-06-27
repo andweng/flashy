@@ -11,7 +11,7 @@ import { parseCSVImport } from '@/lib/csv-import';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { parseDeckExport } from '@/lib/deck-export';
-import { DEFAULT_BUCKET_INTERVALS } from '@/lib/leitner';
+import { DEFAULT_BUCKET_INTERVALS, initialDueDate } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { GradingMode } from '@/types/domain';
 
@@ -98,7 +98,7 @@ export default function ImportDeckScreen() {
             child_id: child.id,
             card_id: c.id,
             bucket_index: c.bucket,
-            next_due_on: today,
+            next_due_on: initialDueDate(today, c.bucket, deck.bucket_intervals_days),
             consecutive_passes_in_top_bucket: 0,
             graduated_at: null,
             last_reviewed_at: null,

@@ -10,8 +10,14 @@ import { useTheme } from '@/hooks/use-theme';
 import { AVATARS } from '@/lib/avatars';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
-import { bucketLetter, bucketsTestedOnDay, DEFAULT_BUCKET_INTERVALS } from '@/lib/leitner';
+import {
+  applyReview,
+  bucketLetter,
+  bucketsTestedOnDay,
+  DEFAULT_BUCKET_INTERVALS,
+} from '@/lib/leitner';
 import { getDayOffset, getEffectiveToday, setDayOffset } from '@/lib/today';
+import type { CardState } from '@/types/domain';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -35,6 +41,10 @@ export default function SettingsScreen() {
   const [resetting, setResetting] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetFeedback, setResetFeedback] = useState<string | null>(null);
+
+  const [markingDone, setMarkingDone] = useState(false);
+  const [confirmingDone, setConfirmingDone] = useState(false);
+  const [doneFeedback, setDoneFeedback] = useState<string | null>(null);
 
   // Day offset (used for migrating a child mid-cycle / previewing the schedule)
   const [dayInput, setDayInput] = useState<string>(String(getDayOffset()));
@@ -125,6 +135,7 @@ export default function SettingsScreen() {
     if (!child) return;
     if (!confirmingReset) {
       setConfirmingReset(true);
+      setConfirmingDone(false);
       return;
     }
     setResetting(true);
@@ -146,6 +157,61 @@ export default function SettingsScreen() {
     } finally {
       setResetting(false);
       setConfirmingReset(false);
+    }
+  }
+
+  async function handleMarkAllDone() {
+    if (!child) return;
+    if (!confirmingDone) {
+      setConfirmingDone(true);
+      setConfirmingReset(false);
+      return;
+    }
+    setMarkingDone(true);
+    setError(null);
+    setDoneFeedback(null);
+    try {
+      const parent = await db.getCurrentParent();
+      const tz = parent?.timezone ?? 'UTC';
+      const today = getEffectiveToday(tz);
+      const due = await db.listDueCardStatesForChild(child.id, today);
+      for (const item of due) {
+        // listDue returns CardState joined with card/deck; pare it back to a
+        // plain CardState so only real columns reach upsertCardState.
+        const state: CardState = {
+          child_id: item.child_id,
+          card_id: item.card_id,
+          bucket_index: item.bucket_index,
+          next_due_on: item.next_due_on,
+          consecutive_passes_in_top_bucket: item.consecutive_passes_in_top_bucket,
+          graduated_at: item.graduated_at,
+          last_reviewed_at: item.last_reviewed_at,
+        };
+        // Treat each due card as one passed review: promote its bucket and push
+        // its due date past today. Recording the review lets "Reset today's
+        // cards" undo this just like a normal review session.
+        const update = applyReview(state, item.deck, child, today, { kind: 'pass' }, true);
+        await db.upsertCardState(update.next_state);
+        await db.recordReview({
+          child_id: child.id,
+          card_id: state.card_id,
+          outcome: 'pass',
+          bucket_before: state.bucket_index,
+          bucket_after: update.next_state.bucket_index,
+          user_input: null,
+        });
+      }
+      setDoneFeedback(
+        due.length === 0
+          ? 'No cards due today.'
+          : `Marked ${due.length} card${due.length === 1 ? '' : 's'} done for today.`,
+      );
+      setTimeout(() => setDoneFeedback(null), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not mark cards done.');
+    } finally {
+      setMarkingDone(false);
+      setConfirmingDone(false);
     }
   }
 
@@ -288,21 +354,44 @@ export default function SettingsScreen() {
           <ThemedText type="smallBold">Today&apos;s review</ThemedText>
           <ThemedView type="backgroundElement" style={styles.section}>
             <ThemedText themeColor="textSecondary" type="small">
-              Undo all of {child.display_name}&apos;s reviews from today — cards go back to the
-              bucket and due date they had this morning, and today&apos;s history is cleared.
+              Reset undoes all of {child.display_name}&apos;s reviews from today — cards go back to
+              the bucket and due date they had this morning. Mark all done passes every card due
+              today, advancing each as if reviewed. Both can be undone with Reset.
             </ThemedText>
             {resetFeedback && (
               <ThemedText themeColor="textSecondary" type="small">{resetFeedback}</ThemedText>
             )}
-            <Pressable style={styles.outlineBtn} onPress={handleReset} disabled={resetting}>
-              <ThemedText>
-                {resetting
-                  ? '…'
-                  : confirmingReset
-                    ? "Tap again to reset today's cards"
-                    : "Reset today's cards"}
-              </ThemedText>
-            </Pressable>
+            {doneFeedback && (
+              <ThemedText themeColor="textSecondary" type="small">{doneFeedback}</ThemedText>
+            )}
+            <View style={styles.btnRow}>
+              <Pressable
+                style={[styles.outlineBtn, styles.btnRowItem]}
+                onPress={handleReset}
+                disabled={resetting || markingDone}
+              >
+                <ThemedText>
+                  {resetting
+                    ? '…'
+                    : confirmingReset
+                      ? "Tap again to reset"
+                      : "Reset today's cards"}
+                </ThemedText>
+              </Pressable>
+              <Pressable
+                style={[styles.outlineBtn, styles.btnRowItem]}
+                onPress={handleMarkAllDone}
+                disabled={markingDone || resetting}
+              >
+                <ThemedText>
+                  {markingDone
+                    ? '…'
+                    : confirmingDone
+                      ? 'Tap again to mark done'
+                      : 'Mark all done'}
+                </ThemedText>
+              </Pressable>
+            </View>
           </ThemedView>
 
           {/* Danger */}
@@ -379,6 +468,8 @@ const styles = StyleSheet.create({
     borderColor: '#888',
     alignItems: 'center',
   },
+  btnRow: { flexDirection: 'row', gap: Spacing.two },
+  btnRowItem: { flex: 1 },
   dangerLabel: { marginTop: Spacing.three },
   deleteBtn: {
     padding: Spacing.three,
