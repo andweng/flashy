@@ -18,12 +18,10 @@ export function parseCSVImport(text: string, defaultMode: GradingMode): CSVImpor
   // Drop blank lines but keep their relative positions for error messages.
   const dataLines: { line: string; rowNum: number }[] = [];
   let headerLine = '';
-  let headerRowNum = 0;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].trim() === '') continue;
     if (!headerLine) {
       headerLine = lines[i];
-      headerRowNum = i + 1;
     } else {
       dataLines.push({ line: lines[i], rowNum: i + 1 });
     }

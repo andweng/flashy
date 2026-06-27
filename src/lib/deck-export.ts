@@ -14,12 +14,12 @@ export type DeckExport = {
     description: string | null;
     bucket_intervals_days: number[];
   };
-  cards: Array<{
+  cards: {
     front: string;
     back: string;
     grading_mode: 'self_grade' | 'typed';
     typed_alternates: string[];
-  }>;
+  }[];
 };
 
 export function serializeDeck(deck: Deck, cards: Card[]): string {
@@ -79,7 +79,7 @@ export function parseDeckExport(text: string): DeckExport {
         ? (deckIn.bucket_intervals_days as number[])
         : [1, 2, 4, 8, 16],
     },
-    cards: (obj.cards as Array<Record<string, unknown>>).map((c) => ({
+    cards: (obj.cards as Record<string, unknown>[]).map((c) => ({
       front: c.front as string,
       back: c.back as string,
       grading_mode: c.grading_mode as 'self_grade' | 'typed',

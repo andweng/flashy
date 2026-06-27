@@ -1,21 +1,27 @@
 import { Link, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Switch, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import type { Deck } from '@/types/domain';
 
 type Row = { deck: Deck; assigned: boolean; cardCount: number };
+// Flat index of every card front across all decks, for the live search.
+type CardHit = { cardId: string; front: string; deckId: string; deckName: string };
 
 export default function DecksScreen() {
   const { child } = useCurrentChild();
   const router = useRouter();
+  const theme = useTheme();
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [index, setIndex] = useState<CardHit[]>([]);
+  const [query, setQuery] = useState('');
 
   useFocusEffect(
     useCallback(() => {
@@ -23,11 +29,15 @@ export default function DecksScreen() {
       void (async () => {
         const parent = await db.getCurrentParent();
         if (!parent) {
-          if (!cancelled) setRows([]);
+          if (!cancelled) {
+            setRows([]);
+            setIndex([]);
+          }
           return;
         }
         const decks = await db.listDecksForParent(parent.id);
         const built: Row[] = [];
+        const cardIndex: CardHit[] = [];
         for (const deck of decks) {
           const [assignedIds, cards] = await Promise.all([
             db.listDeckAssignments(deck.id),
@@ -38,14 +48,27 @@ export default function DecksScreen() {
             assigned: child ? assignedIds.includes(child.id) : false,
             cardCount: cards.length,
           });
+          for (const c of cards) {
+            cardIndex.push({ cardId: c.id, front: c.front, deckId: deck.id, deckName: deck.name });
+          }
         }
-        if (!cancelled) setRows(built);
+        if (!cancelled) {
+          setRows(built);
+          setIndex(cardIndex);
+        }
       })();
       return () => {
         cancelled = true;
       };
     }, [child]),
   );
+
+  const q = query.trim().toLowerCase();
+  const hits = useMemo(
+    () => (q ? index.filter((h) => h.front.toLowerCase().includes(q)) : []),
+    [q, index],
+  );
+  const deckHitCount = useMemo(() => new Set(hits.map((h) => h.deckId)).size, [hits]);
 
   async function toggleAssign(deck: Deck, current: boolean) {
     if (!child) return;
@@ -73,22 +96,57 @@ export default function DecksScreen() {
           </View>
         </View>
 
-        {rows?.length === 0 && (
-          <ThemedText themeColor="textSecondary">No decks yet — create one to get started.</ThemedText>
-        )}
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search cards across all decks"
+          placeholderTextColor={theme.textSecondary}
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+          style={[styles.search, { color: theme.text, borderColor: theme.textSecondary }]}
+        />
 
-        {rows?.map(({ deck, assigned, cardCount }) => (
-          <ThemedView key={deck.id} type="backgroundElement" style={styles.row}>
-            <Pressable style={styles.rowMain} onPress={() => router.push(`/decks/${deck.id}`)}>
-              <ThemedText>{deck.name}</ThemedText>
-              <ThemedText themeColor="textSecondary" type="small">
-                {cardCount} card{cardCount === 1 ? '' : 's'}
-                {child && (assigned ? ` · in ${child.display_name}'s rotation` : '')}
+        {q ? (
+          <ScrollView contentContainerStyle={styles.results} keyboardShouldPersistTaps="handled">
+            <ThemedText themeColor="textSecondary" type="small">
+              {hits.length} hit{hits.length === 1 ? '' : 's'} across {deckHitCount} deck
+              {deckHitCount === 1 ? '' : 's'}
+            </ThemedText>
+            {hits.map((h) => (
+              <ThemedView key={h.cardId} type="backgroundElement" style={styles.row}>
+                <Pressable style={styles.rowMain} onPress={() => router.push(`/decks/${h.deckId}`)}>
+                  <ThemedText>{h.front}</ThemedText>
+                  <ThemedText themeColor="textSecondary" type="small">
+                    {h.deckName}
+                  </ThemedText>
+                </Pressable>
+              </ThemedView>
+            ))}
+          </ScrollView>
+        ) : (
+          <ScrollView contentContainerStyle={styles.results} keyboardShouldPersistTaps="handled">
+            {rows?.length === 0 && (
+              <ThemedText themeColor="textSecondary">
+                No decks yet — create one to get started.
               </ThemedText>
-            </Pressable>
-            {child && <Switch value={assigned} onValueChange={() => toggleAssign(deck, assigned)} />}
-          </ThemedView>
-        ))}
+            )}
+
+            {rows?.map(({ deck, assigned, cardCount }) => (
+              <ThemedView key={deck.id} type="backgroundElement" style={styles.row}>
+                <Pressable style={styles.rowMain} onPress={() => router.push(`/decks/${deck.id}`)}>
+                  <ThemedText>{deck.name}</ThemedText>
+                  <ThemedText themeColor="textSecondary" type="small">
+                    {cardCount} card{cardCount === 1 ? '' : 's'}
+                    {child && (assigned ? ` · in ${child.display_name}'s rotation` : '')}
+                  </ThemedText>
+                </Pressable>
+                {child && (
+                  <Switch value={assigned} onValueChange={() => toggleAssign(deck, assigned)} />
+                )}
+              </ThemedView>
+            ))}
+          </ScrollView>
+        )}
       </SafeAreaView>
     </ThemedView>
   );
@@ -99,6 +157,14 @@ const styles = StyleSheet.create({
   safe: { flex: 1, padding: Spacing.four, gap: Spacing.three },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
   headerActions: { flexDirection: 'row', gap: Spacing.three, alignItems: 'center' },
+  search: {
+    fontSize: 16,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderWidth: 1,
+    borderRadius: Spacing.two,
+  },
+  results: { gap: Spacing.three, paddingBottom: Spacing.four },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

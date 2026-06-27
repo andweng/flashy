@@ -22,7 +22,7 @@ const url = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://placeholder.supabas
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key';
 
 if (!process.env.EXPO_PUBLIC_SUPABASE_URL || !process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY) {
-  // eslint-disable-next-line no-console
+   
   console.warn(
     '[supabase] EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY missing — client will only work in mock mode.',
   );

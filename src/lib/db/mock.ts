@@ -26,7 +26,7 @@ const decks: Deck[] = [
   { id: 'd3', parent_id: 'p1', name: 'World Capitals', description: null, bucket_intervals_days: [1, 3, 7, 14, 30] },
 ];
 
-const assignments: Array<{ deck_id: string; child_id: string }> = [
+const assignments: { deck_id: string; child_id: string }[] = [
   { deck_id: 'd1', child_id: 'c1' },
   { deck_id: 'd2', child_id: 'c1' },
   { deck_id: 'd2', child_id: 'c2' },
@@ -69,7 +69,7 @@ const cards: Card[] = [
 ];
 
 // Spread states across buckets and due dates to make the home screen look real.
-const PATTERNS: Array<{ bucket: number; daysOffset: number }> = [
+const PATTERNS: { bucket: number; daysOffset: number }[] = [
   { bucket: 0, daysOffset: 0 },
   { bucket: 0, daysOffset: -1 },
   { bucket: 1, daysOffset: 0 },

@@ -55,6 +55,9 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     if (!child) return;
+    // Sync the editable form fields when the selected child loads/changes.
+    // These are user-editable afterwards, so a key-reset wouldn't fit.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setName(child.display_name);
     setAvatar(child.avatar ?? AVATARS[0]);
     setGraduateEnabled(child.graduate_after_passes != null);
@@ -312,7 +315,7 @@ export default function SettingsScreen() {
           <ThemedView type="backgroundElement" style={styles.section}>
             <ThemedText themeColor="textSecondary" type="small">
               What day of the cycle is the child on? 0 = today is day 0 (fresh start). Bumping this
-              shifts the effective "today" forward by that many days, so next-due math lines up
+              shifts the effective &quot;today&quot; forward by that many days, so next-due math lines up
               with where the child already is when migrating in from another app.
             </ThemedText>
             <View style={styles.dayInputRow}>

@@ -1,6 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useFocusEffect } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -280,6 +279,20 @@ export default function DeckDetailScreen() {
     );
   }
 
+  // Per-child count of cards in each bucket, e.g. "3 A, 1 B". Only meaningful
+  // when a child is selected (bucket state is per-child).
+  const bucketBreakdown =
+    currentChild && cardStates.size > 0
+      ? deck.bucket_intervals_days
+          .map((_, i) => ({
+            i,
+            n: cards.filter((c) => cardStates.get(c.id)?.bucket_index === i).length,
+          }))
+          .filter(({ n }) => n > 0)
+          .map(({ i, n }) => `${n} ${bucketLetter(i)}`)
+          .join(', ')
+      : '';
+
   return (
     <ThemedView style={styles.container}>
       <Stack.Screen options={{ title: deck.name }} />
@@ -416,7 +429,10 @@ export default function DeckDetailScreen() {
           </ThemedView>
 
           {/* Card list */}
-          <ThemedText type="smallBold">{cards.length} card{cards.length === 1 ? '' : 's'}</ThemedText>
+          <ThemedText type="smallBold">
+            {cards.length} card{cards.length === 1 ? '' : 's'}
+            {bucketBreakdown && ` (${bucketBreakdown})`}
+          </ThemedText>
           {cards.map((card) =>
             editingId === card.id ? (
               <ThemedView key={card.id} type="backgroundElement" style={styles.section}>

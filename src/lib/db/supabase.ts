@@ -91,7 +91,7 @@ export const supabaseDB: DB = {
       .eq('child_id', childId);
     if (error) throw error;
     // supabase-js types joined relations as arrays; the actual response is one object per row.
-    const rows = (data ?? []) as unknown as Array<{ deck: Deck | null }>;
+    const rows = (data ?? []) as unknown as { deck: Deck | null }[];
     return rows.map((row) => row.deck).filter((d): d is Deck => d !== null);
   },
 
@@ -160,7 +160,7 @@ export const supabaseDB: DB = {
       .select('child_id')
       .eq('deck_id', input.deck_id);
     if (e2) throw e2;
-    const childIds = ((assignments ?? []) as Array<{ child_id: string }>).map((a) => a.child_id);
+    const childIds = ((assignments ?? []) as { child_id: string }[]).map((a) => a.child_id);
     if (childIds.length) {
       const today = getEffectiveToday();
       const rows = childIds.map((childId) => ({
@@ -200,7 +200,7 @@ export const supabaseDB: DB = {
       .select('child_id')
       .eq('deck_id', deckId);
     if (error) throw error;
-    return ((data ?? []) as Array<{ child_id: string }>).map((row) => row.child_id);
+    return ((data ?? []) as { child_id: string }[]).map((row) => row.child_id);
   },
   async assignDeckToChild(deckId, childId) {
     const { error } = await supabase
@@ -213,7 +213,7 @@ export const supabaseDB: DB = {
       .select('id')
       .eq('deck_id', deckId);
     if (e2) throw e2;
-    const cardIds = ((cardRows ?? []) as Array<{ id: string }>).map((c) => c.id);
+    const cardIds = ((cardRows ?? []) as { id: string }[]).map((c) => c.id);
     if (cardIds.length) {
       const today = getEffectiveToday();
       const rows = cardIds.map((cardId) => ({
