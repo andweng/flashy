@@ -52,6 +52,14 @@ export default function SettingsScreen() {
   const [dayInput, setDayInput] = useState<string>('0');
   const [dayError, setDayError] = useState<string | null>(null);
   const [dayFeedback, setDayFeedback] = useState<string | null>(null);
+  const [tz, setTz] = useState('UTC');
+
+  useEffect(() => {
+    void (async () => {
+      const p = await db.getCurrentParent();
+      if (p?.timezone) setTz(p.timezone);
+    })();
+  }, []);
 
   useEffect(() => {
     if (!child) return;
@@ -62,12 +70,12 @@ export default function SettingsScreen() {
     setAvatar(child.avatar ?? AVATARS[0]);
     setGraduateEnabled(child.graduate_after_passes != null);
     setGraduateN(child.graduate_after_passes != null ? String(child.graduate_after_passes) : '3');
-    setDayInput(String(cycleDayOf(child.cycle_start_date, getEffectiveToday('UTC'))));
-  }, [child]);
+    setDayInput(String(cycleDayOf(child.cycle_start_date, getEffectiveToday(tz))));
+  }, [child, tz]);
 
   if (!child) return null;
 
-  const appliedDay = cycleDayOf(child.cycle_start_date, getEffectiveToday('UTC'));
+  const appliedDay = cycleDayOf(child.cycle_start_date, getEffectiveToday(tz));
 
   const dirty =
     name.trim() !== child.display_name ||

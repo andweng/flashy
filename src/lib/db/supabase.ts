@@ -70,16 +70,8 @@ export const supabaseDB: DB = {
   },
   async applyCycleDay(childId, cycleDay, realToday): Promise<Child> {
     const cycle_start_date = cycleDay <= 0 ? null : addDays(realToday, -cycleDay);
-    const { data: childRow, error: cErr } = await supabase
-      .from('children')
-      .update({ cycle_start_date })
-      .eq('id', childId)
-      .select(CHILD_COLS)
-      .single();
-    if (cErr) throw cErr;
 
-    // Pull this child's non-graduated states joined to their deck intervals,
-    // recompute next_due_on, and write each back.
+    // Fetch this child's non-graduated states joined to their deck intervals.
     const { data: rows, error: sErr } = await supabase
       .from('card_states')
       .select('child_id, card_id, bucket_index, card:cards!inner(deck:decks!inner(bucket_intervals_days))')
@@ -93,6 +85,9 @@ export const supabaseDB: DB = {
       bucket_index: number;
       card: { deck: { bucket_intervals_days: number[] } };
     };
+    // Rewrite every card's next_due_on FIRST. If this fails partway, the child is
+    // still on their old cycle day with consistent dates; applyCycleDay is
+    // idempotent, so re-running it cleanly completes a partial reposition.
     for (const r of (rows as unknown as Row[]) ?? []) {
       const next_due_on = dueDateForCycleDay(
         realToday, cycleDay, r.bucket_index, r.card.deck.bucket_intervals_days,
@@ -104,6 +99,15 @@ export const supabaseDB: DB = {
         .eq('card_id', r.card_id);
       if (uErr) throw uErr;
     }
+
+    // Move the child onto the new cycle day LAST, and return the updated row.
+    const { data: childRow, error: cErr } = await supabase
+      .from('children')
+      .update({ cycle_start_date })
+      .eq('id', childId)
+      .select(CHILD_COLS)
+      .single();
+    if (cErr) throw cErr;
     return childRow as Child;
   },
   async deleteChild(id) {

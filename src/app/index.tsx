@@ -33,7 +33,8 @@ export default function ProfilePicker() {
         if (!cancelled) setChildren(list);
 
         // Tally each child's cards due today for the "needs review" dot.
-        // Each child has their own day offset, so compute effective today per child.
+        // Due counts compare against the real calendar day — each child's schedule is
+        // pre-positioned (cycle_start_date), so there's no per-child read-time offset.
         const counts = await Promise.all(
           list.map((c) =>
             db
