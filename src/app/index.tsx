@@ -37,7 +37,7 @@ export default function ProfilePicker() {
         const counts = await Promise.all(
           list.map((c) =>
             db
-              .countDueCardsForChild(c.id, getEffectiveToday(parent.timezone, c.day_offset))
+              .countDueCardsForChild(c.id, getEffectiveToday(parent.timezone))
               .catch(() => 0),
           ),
         );

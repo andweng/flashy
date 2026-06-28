@@ -46,7 +46,7 @@ export default function ReviewScreen() {
     void (async () => {
       const parent = await db.getCurrentParent();
       const tz = parent?.timezone ?? 'UTC';
-      const _today = getEffectiveToday(tz, child.day_offset);
+      const _today = getEffectiveToday(tz);
       setToday(_today);
 
       const due = await db.listDueCardStatesForChild(child.id, _today);

@@ -14,6 +14,7 @@ import {
   applyReview,
   bucketLetter,
   bucketsTestedOnDay,
+  cycleDayOf,
   DEFAULT_BUCKET_INTERVALS,
 } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
@@ -61,13 +62,12 @@ export default function SettingsScreen() {
     setAvatar(child.avatar ?? AVATARS[0]);
     setGraduateEnabled(child.graduate_after_passes != null);
     setGraduateN(child.graduate_after_passes != null ? String(child.graduate_after_passes) : '3');
-    setDayInput(String(child.day_offset));
+    setDayInput(String(cycleDayOf(child.cycle_start_date, getEffectiveToday('UTC'))));
   }, [child]);
 
   if (!child) return null;
 
-  const appliedDay = child.day_offset;
-  const effectiveToday = getEffectiveToday('UTC', child.day_offset);
+  const appliedDay = cycleDayOf(child.cycle_start_date, getEffectiveToday('UTC'));
 
   const dirty =
     name.trim() !== child.display_name ||
@@ -112,9 +112,11 @@ export default function SettingsScreen() {
       return;
     }
     try {
-      const updated = await db.updateChild(child.id, { day_offset: parsed });
+      const parent = await db.getCurrentParent();
+      const realToday = getEffectiveToday(parent?.timezone ?? 'UTC');
+      const updated = await db.applyCycleDay(child.id, parsed, realToday);
       setChild(updated);
-      setDayFeedback(parsed === 0 ? 'Reset to real today.' : `Now treating today as day ${parsed}.`);
+      setDayFeedback(parsed === 0 ? 'Reset to a fresh start (day 0).' : `Repositioned to day ${parsed}.`);
       setTimeout(() => setDayFeedback(null), 2000);
     } catch (e) {
       setDayError(e instanceof Error ? e.message : 'Could not save.');
@@ -125,9 +127,11 @@ export default function SettingsScreen() {
     if (!child) return;
     setDayInput('0');
     try {
-      const updated = await db.updateChild(child.id, { day_offset: 0 });
+      const parent = await db.getCurrentParent();
+      const realToday = getEffectiveToday(parent?.timezone ?? 'UTC');
+      const updated = await db.applyCycleDay(child.id, 0, realToday);
       setChild(updated);
-      setDayFeedback('Reset to real today.');
+      setDayFeedback('Reset to a fresh start (day 0).');
       setTimeout(() => setDayFeedback(null), 2000);
     } catch (e) {
       setDayError(e instanceof Error ? e.message : 'Could not save.');
@@ -352,7 +356,7 @@ export default function SettingsScreen() {
               </Pressable>
             </View>
             <ThemedText themeColor="textSecondary" type="small">
-              Applied: day {appliedDay} · Effective today: {effectiveToday}
+              Currently on day {appliedDay}.
             </ThemedText>
             {dayError && <ThemedText style={styles.error}>{dayError}</ThemedText>}
             {dayFeedback && (

@@ -41,4 +41,10 @@ export interface DB {
   // Returns the number of cards reverted. `today` is the effective today;
   // `timezone` is the parent's IANA zone (for matching real review timestamps).
   resetTodaysReviewsForChild(childId: string, today: string, timezone: string): Promise<number>;
+
+  // Reposition a child onto cycle day `cycleDay`: persist cycle_start_date
+  // (= realToday − cycleDay, or null for day 0) and rewrite every non-graduated
+  // card_state's next_due_on via dueDateForCycleDay (no backlog). Returns the
+  // updated child. `realToday` is the real calendar day in the parent's timezone.
+  applyCycleDay(childId: string, cycleDay: number, realToday: string): Promise<Child>;
 }

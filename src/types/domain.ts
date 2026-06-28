@@ -12,9 +12,10 @@ export type Child = {
   display_name: string;
   avatar: string | null;
   graduate_after_passes: number | null;
-  // How many days into their Leitner cycle this child is. Shifts their
-  // "effective today" forward (for migrating a child in mid-cycle). Per-child.
-  day_offset: number;
+  // Calendar date treated as day 0 of this child's Leitner cycle (null ⇒ fresh
+  // start / day 0). Current cycle day = daysBetween(cycle_start_date, realToday).
+  // Set by the "what day am I on" control, which also rewrites next_due_on.
+  cycle_start_date: string | null;
 };
 
 export type Deck = {

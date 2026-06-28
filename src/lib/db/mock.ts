@@ -1,7 +1,7 @@
 // In-memory mock DB used while building UI. Reads/writes a fixture set.
 // Swap to a Supabase-backed impl in lib/db/index.ts when ready.
 
-import { addDays, todayInTz } from '@/lib/leitner';
+import { addDays, dueDateForCycleDay, todayInTz } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
@@ -16,8 +16,8 @@ const parent: Parent = {
 };
 
 const children: Child[] = [
-  { id: 'c1', parent_id: 'p1', display_name: 'Mira', avatar: '🦊', graduate_after_passes: null, day_offset: 0 },
-  { id: 'c2', parent_id: 'p1', display_name: 'Eli', avatar: '🐻', graduate_after_passes: 3, day_offset: 0 },
+  { id: 'c1', parent_id: 'p1', display_name: 'Mira', avatar: '🦊', graduate_after_passes: null, cycle_start_date: null },
+  { id: 'c2', parent_id: 'p1', display_name: 'Eli', avatar: '🐻', graduate_after_passes: 3, cycle_start_date: null },
 ];
 
 const decks: Deck[] = [
@@ -124,6 +124,23 @@ export const mockDB: DB = {
     const idx = children.findIndex((c) => c.id === id);
     if (idx < 0) throw new Error('Child not found');
     children[idx] = { ...children[idx], ...patch };
+    return children[idx];
+  },
+  async applyCycleDay(childId, cycleDay, realToday) {
+    const idx = children.findIndex((c) => c.id === childId);
+    if (idx < 0) throw new Error('Child not found');
+    const cycle_start_date = cycleDay <= 0 ? null : addDays(realToday, -cycleDay);
+    children[idx] = { ...children[idx], cycle_start_date };
+    // Reschedule every non-graduated card_state against its deck's intervals.
+    for (const s of states) {
+      if (s.child_id !== childId || s.graduated_at) continue;
+      const card = cards.find((c) => c.id === s.card_id);
+      const deck = card ? decks.find((d) => d.id === card.deck_id) : undefined;
+      if (!deck) continue;
+      s.next_due_on = dueDateForCycleDay(
+        realToday, cycleDay, s.bucket_index, deck.bucket_intervals_days,
+      );
+    }
     return children[idx];
   },
   async deleteChild(id) {

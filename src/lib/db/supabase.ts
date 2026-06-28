@@ -3,13 +3,13 @@
 // where the API takes it as input.
 
 import { supabase } from '@/lib/supabase';
-import { addDays, todayInTz } from '@/lib/leitner';
+import { addDays, dueDateForCycleDay, todayInTz } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
 const PARENT_COLS = 'id, display_name, timezone';
-const CHILD_COLS = 'id, parent_id, display_name, avatar, graduate_after_passes, day_offset';
+const CHILD_COLS = 'id, parent_id, display_name, avatar, graduate_after_passes, cycle_start_date';
 const DECK_COLS = 'id, parent_id, name, description, bucket_intervals_days';
 const CARD_COLS = 'id, deck_id, front, back, grading_mode, typed_alternates, choices';
 const CARD_STATE_COLS =
@@ -67,6 +67,44 @@ export const supabaseDB: DB = {
       .single();
     if (error) throw error;
     return data as Child;
+  },
+  async applyCycleDay(childId, cycleDay, realToday): Promise<Child> {
+    const cycle_start_date = cycleDay <= 0 ? null : addDays(realToday, -cycleDay);
+    const { data: childRow, error: cErr } = await supabase
+      .from('children')
+      .update({ cycle_start_date })
+      .eq('id', childId)
+      .select(CHILD_COLS)
+      .single();
+    if (cErr) throw cErr;
+
+    // Pull this child's non-graduated states joined to their deck intervals,
+    // recompute next_due_on, and write each back.
+    const { data: rows, error: sErr } = await supabase
+      .from('card_states')
+      .select('child_id, card_id, bucket_index, card:cards!inner(deck:decks!inner(bucket_intervals_days))')
+      .eq('child_id', childId)
+      .is('graduated_at', null);
+    if (sErr) throw sErr;
+
+    type Row = {
+      child_id: string;
+      card_id: string;
+      bucket_index: number;
+      card: { deck: { bucket_intervals_days: number[] } };
+    };
+    for (const r of (rows as unknown as Row[]) ?? []) {
+      const next_due_on = dueDateForCycleDay(
+        realToday, cycleDay, r.bucket_index, r.card.deck.bucket_intervals_days,
+      );
+      const { error: uErr } = await supabase
+        .from('card_states')
+        .update({ next_due_on })
+        .eq('child_id', r.child_id)
+        .eq('card_id', r.card_id);
+      if (uErr) throw uErr;
+    }
+    return childRow as Child;
   },
   async deleteChild(id) {
     // FK cascade handles card_states + deck_assignments.
