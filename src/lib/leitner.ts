@@ -63,6 +63,33 @@ export function initialDueDate(today: string, bucketIndex: number, intervals: nu
   return addDays(today, intervals[bucketIndex] ?? 1);
 }
 
+// Current cycle day for a child given their stored cycle-start date (null ⇒ day 0,
+// i.e. a fresh start). Clamped to ≥ 0 so a future-dated start can't go negative.
+export function cycleDayOf(cycleStart: string | null, realToday: string): number {
+  if (!cycleStart) return 0;
+  return Math.max(0, daysBetween(cycleStart, realToday));
+}
+
+// `next_due_on` for a bucket-`bucketIndex` card when the child sits on cycle day
+// `cycleDay`, with NO accumulated backlog: the soonest day ≥ today on which the
+// idealized fresh-start cycle would test that bucket. Day 0 mirrors initialDueDate
+// (bucket A due today; higher buckets one interval out). Never returns a past date,
+// so owedReviews yields exactly 1 for a card due today.
+export function dueDateForCycleDay(
+  today: string,
+  cycleDay: number,
+  bucketIndex: number,
+  intervals: number[],
+): string {
+  const interval = intervals[bucketIndex] ?? 1;
+  if (cycleDay <= 0) {
+    return bucketIndex <= 0 ? today : addDays(today, interval);
+  }
+  // Smallest positive multiple of `interval` at or after `cycleDay`.
+  const nextTestDay = Math.ceil(cycleDay / interval) * interval;
+  return addDays(today, nextTestDay - cycleDay);
+}
+
 // How many reviews a card owes by `today`. 0 if not due, ≥1 if due (incl. backlog).
 export function owedReviews(state: CardState, deck: Deck, today: string): number {
   if (state.graduated_at) return 0;
