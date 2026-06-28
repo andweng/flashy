@@ -90,6 +90,32 @@ export function dueDateForCycleDay(
   return addDays(today, nextTestDay - cycleDay);
 }
 
+// For the deck schedule preview: given a child's card_states in ONE deck, which
+// buckets would have cards due on cycle day `cycleDay`, and how many. A card is due
+// on day N iff its repositioned date equals today (dueDateForCycleDay returns
+// exactly `today` when bucket i is tested on day N). Groups by bucket; only buckets
+// holding at least one non-graduated card appear, sorted by bucket index.
+export function dueGroupsForDeckOnDay(
+  states: { bucket_index: number; graduated_at: string | null }[],
+  intervals: number[],
+  cycleDay: number,
+  realToday: string,
+): { bucket: number; due: number; notDue: number }[] {
+  const byBucket = new Map<number, { due: number; notDue: number }>();
+  for (const s of states) {
+    if (s.graduated_at) continue;
+    const isDue =
+      dueDateForCycleDay(realToday, cycleDay, s.bucket_index, intervals) === realToday;
+    const row = byBucket.get(s.bucket_index) ?? { due: 0, notDue: 0 };
+    if (isDue) row.due += 1;
+    else row.notDue += 1;
+    byBucket.set(s.bucket_index, row);
+  }
+  return [...byBucket.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([bucket, v]) => ({ bucket, due: v.due, notDue: v.notDue }));
+}
+
 // How many reviews a card owes by `today`. 0 if not due, ≥1 if due (incl. backlog).
 export function owedReviews(state: CardState, deck: Deck, today: string): number {
   if (state.graduated_at) return 0;
