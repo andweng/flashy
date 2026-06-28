@@ -294,7 +294,14 @@ export default function DeckDetailScreen() {
   })();
   const previewGroups =
     deck && currentChild
-      ? dueGroupsForDeckOnDay([...cardStates.values()], deck.bucket_intervals_days, previewDay, realToday)
+      ? dueGroupsForDeckOnDay(
+          cards
+            .map((c) => cardStates.get(c.id))
+            .filter((s): s is CardState => s !== undefined),
+          deck.bucket_intervals_days,
+          previewDay,
+          realToday,
+        )
       : [];
   const previewDue = previewGroups.filter((g) => g.due > 0);
   const previewNotDue = previewGroups.filter((g) => g.notDue > 0);
