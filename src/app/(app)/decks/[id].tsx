@@ -11,7 +11,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { serializeDeck } from '@/lib/deck-export';
-import { bucketLetter, cycleDayOf, dueDateForCycleDay } from '@/lib/leitner';
+import { bucketLetter, cycleDayOf, dueDateForCycleDay, dueGroupsForDeckOnDay } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
 
@@ -27,6 +27,13 @@ export default function DeckDetailScreen() {
   const [assignedSet, setAssignedSet] = useState<Set<string>>(new Set());
   const [cardStates, setCardStates] = useState<Map<string, CardState>>(new Map());
   const [bucketPickerCardId, setBucketPickerCardId] = useState<string | null>(null);
+
+  // Per-(current child, this deck) Leitner schedule control.
+  const [cycleStart, setCycleStart] = useState<string | null>(null);
+  const [scheduleTz, setScheduleTz] = useState('UTC');
+  const [dayInput, setDayInput] = useState('0');
+  const [dayError, setDayError] = useState<string | null>(null);
+  const [dayFeedback, setDayFeedback] = useState<string | null>(null);
 
   // Quick-add form
   const frontRef = useRef<TextInput>(null);
@@ -68,12 +75,17 @@ export default function DeckDetailScreen() {
     setDeck(d);
     setCards(cs);
     setAssignedSet(new Set(assignedIds));
+    setScheduleTz(parent?.timezone ?? 'UTC');
     if (parent) setChildren(await db.listChildren(parent.id));
     if (currentChild) {
       const all = await db.listCardStatesForChild(currentChild.id);
       setCardStates(new Map(all.map((s) => [s.card_id, s])));
+      const assignment = await db.getDeckAssignment(id, currentChild.id);
+      setCycleStart(assignment?.cycle_start_date ?? null);
+      setDayInput(String(cycleDayOf(assignment?.cycle_start_date ?? null, getEffectiveToday(parent?.timezone ?? 'UTC'))));
     } else {
       setCardStates(new Map());
+      setCycleStart(null);
     }
   }, [id, currentChild]);
 
@@ -274,6 +286,39 @@ export default function DeckDetailScreen() {
     router.replace('/decks');
   }
 
+  const realToday = getEffectiveToday(scheduleTz);
+  const appliedDay = cycleDayOf(cycleStart, realToday);
+  const previewDay = (() => {
+    const n = parseInt(dayInput.trim(), 10);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  })();
+  const previewGroups =
+    deck && currentChild
+      ? dueGroupsForDeckOnDay([...cardStates.values()], deck.bucket_intervals_days, previewDay, realToday)
+      : [];
+  const previewDue = previewGroups.filter((g) => g.due > 0);
+  const previewNotDue = previewGroups.filter((g) => g.notDue > 0);
+
+  async function applyCycleDayForDeck(targetDay: number) {
+    if (!deck || !currentChild) return;
+    setDayError(null);
+    setDayFeedback(null);
+    if (!Number.isFinite(targetDay) || targetDay < 0) {
+      setDayError('Day must be a non-negative integer.');
+      return;
+    }
+    try {
+      const updated = await db.applyCycleDay(currentChild.id, deck.id, targetDay, realToday);
+      setCycleStart(updated.cycle_start_date);
+      setDayInput(String(targetDay));
+      setDayFeedback(targetDay === 0 ? 'Reset to a fresh start (day 0).' : `Repositioned to day ${targetDay}.`);
+      setTimeout(() => setDayFeedback(null), 2000);
+      await refresh();
+    } catch (e) {
+      setDayError(e instanceof Error ? e.message : 'Could not save.');
+    }
+  }
+
   if (!deck) {
     return (
       <ThemedView style={styles.container}>
@@ -366,6 +411,48 @@ export default function DeckDetailScreen() {
                   .join(' · ')}
               </ThemedText>
             </>
+          )}
+
+          {/* Per-child schedule control */}
+          {deck && currentChild && (
+            <ThemedView type="backgroundElement" style={{ padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two }}>
+              <ThemedText type="smallBold">Schedule · {currentChild.display_name}</ThemedText>
+              <ThemedText themeColor="textSecondary" type="small">
+                What day of this deck&apos;s cycle is {currentChild.display_name} on? Applying rewrites
+                this deck&apos;s due dates so the right groups come due — no backlog.
+              </ThemedText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
+                <ThemedText>Day</ThemedText>
+                <TextInput
+                  value={dayInput}
+                  onChangeText={setDayInput}
+                  placeholder="0"
+                  placeholderTextColor={theme.textSecondary}
+                  keyboardType="number-pad"
+                  style={{ fontSize: 16, paddingVertical: Spacing.one, paddingHorizontal: Spacing.two, borderWidth: 1, borderColor: theme.textSecondary, borderRadius: Spacing.two, minWidth: 48, textAlign: 'center', color: theme.text }}
+                />
+              </View>
+              <ThemedText themeColor="textSecondary" type="small">
+                {previewDue.length === 0
+                  ? `Day ${previewDay}: nothing in this deck would be due.`
+                  : `Day ${previewDay} — ${previewDue.reduce((n, g) => n + g.due, 0)} card${previewDue.reduce((n, g) => n + g.due, 0) === 1 ? '' : 's'} due: ${previewDue.map((g) => `${bucketLetter(g.bucket)} ×${g.due}`).join(', ')}${previewNotDue.length ? ` · not yet: ${previewNotDue.map((g) => `${bucketLetter(g.bucket)} ×${g.notDue}`).join(', ')}` : ''}`}
+              </ThemedText>
+              <View style={{ flexDirection: 'row', gap: Spacing.two }}>
+                <Pressable
+                  onPress={() => applyCycleDayForDeck(0)}
+                  style={{ padding: Spacing.three, borderRadius: Spacing.two, borderWidth: 1, borderColor: '#888', alignItems: 'center' }}>
+                  <ThemedText>Reset</ThemedText>
+                </Pressable>
+                <Pressable
+                  onPress={() => applyCycleDayForDeck(previewDay)}
+                  style={{ flex: 1, backgroundColor: '#3c87f7', paddingVertical: Spacing.three, borderRadius: Spacing.two, alignItems: 'center' }}>
+                  <ThemedText style={{ color: '#fff', fontWeight: '600' }}>Apply</ThemedText>
+                </Pressable>
+              </View>
+              <ThemedText themeColor="textSecondary" type="small">Currently on day {appliedDay}.</ThemedText>
+              {dayError && <ThemedText style={{ color: '#d2433f' }}>{dayError}</ThemedText>}
+              {dayFeedback && <ThemedText themeColor="textSecondary" type="small">{dayFeedback}</ThemedText>}
+            </ThemedView>
           )}
 
           {/* Quick-add card */}
