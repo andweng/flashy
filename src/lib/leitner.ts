@@ -27,7 +27,6 @@ export function parseIntervalsList(s: string): number[] {
   return out;
 }
 
-
 export function todayInTz(timezone: string, now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now);
 }
