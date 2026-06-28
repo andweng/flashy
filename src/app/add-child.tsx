@@ -34,7 +34,6 @@ export default function AddChildScreen() {
         display_name: trimmed,
         avatar,
         graduate_after_passes: null,
-        cycle_start_date: null,
       });
       router.back();
     } catch (e) {

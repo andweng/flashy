@@ -12,9 +12,14 @@ export type Child = {
   display_name: string;
   avatar: string | null;
   graduate_after_passes: number | null;
-  // Calendar date treated as day 0 of this child's Leitner cycle (null ⇒ fresh
-  // start / day 0). Current cycle day = daysBetween(cycle_start_date, realToday).
-  // Set by the "what day am I on" control, which also rewrites next_due_on.
+};
+
+// One child's enrollment in one deck. cycle_start_date is the per-(child, deck)
+// Leitner anchor (null = fresh start / day 0); current cycle day =
+// daysBetween(cycle_start_date, realToday).
+export type DeckAssignment = {
+  deck_id: string;
+  child_id: string;
   cycle_start_date: string | null;
 };
 

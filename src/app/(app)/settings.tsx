@@ -10,13 +10,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { AVATARS } from '@/lib/avatars';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
-import {
-  applyReview,
-  bucketLetter,
-  bucketsTestedOnDay,
-  cycleDayOf,
-  DEFAULT_BUCKET_INTERVALS,
-} from '@/lib/leitner';
+import { applyReview } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { CardState } from '@/types/domain';
 
@@ -47,11 +41,6 @@ export default function SettingsScreen() {
   const [confirmingDone, setConfirmingDone] = useState(false);
   const [doneFeedback, setDoneFeedback] = useState<string | null>(null);
 
-  // Day offset (used for migrating a child mid-cycle / previewing the schedule).
-  // Per-child: seeded from the child record below and persisted via updateChild.
-  const [dayInput, setDayInput] = useState<string>('0');
-  const [dayError, setDayError] = useState<string | null>(null);
-  const [dayFeedback, setDayFeedback] = useState<string | null>(null);
   const [tz, setTz] = useState('UTC');
 
   useEffect(() => {
@@ -70,12 +59,9 @@ export default function SettingsScreen() {
     setAvatar(child.avatar ?? AVATARS[0]);
     setGraduateEnabled(child.graduate_after_passes != null);
     setGraduateN(child.graduate_after_passes != null ? String(child.graduate_after_passes) : '3');
-    setDayInput(String(cycleDayOf(child.cycle_start_date, getEffectiveToday(tz))));
   }, [child, tz]);
 
   if (!child) return null;
-
-  const appliedDay = cycleDayOf(child.cycle_start_date, getEffectiveToday(tz));
 
   const dirty =
     name.trim() !== child.display_name ||
@@ -109,49 +95,6 @@ export default function SettingsScreen() {
       setSavePending(false);
     }
   }
-
-  async function applyDayOffset() {
-    if (!child) return;
-    setDayError(null);
-    setDayFeedback(null);
-    const parsed = parseInt(dayInput.trim(), 10);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      setDayError('Day must be a non-negative integer.');
-      return;
-    }
-    try {
-      const parent = await db.getCurrentParent();
-      const realToday = getEffectiveToday(parent?.timezone ?? 'UTC');
-      const updated = await db.applyCycleDay(child.id, parsed, realToday);
-      setChild(updated);
-      setDayFeedback(parsed === 0 ? 'Reset to a fresh start (day 0).' : `Repositioned to day ${parsed}.`);
-      setTimeout(() => setDayFeedback(null), 2000);
-    } catch (e) {
-      setDayError(e instanceof Error ? e.message : 'Could not save.');
-    }
-  }
-
-  async function resetDayOffset() {
-    if (!child) return;
-    setDayInput('0');
-    try {
-      const parent = await db.getCurrentParent();
-      const realToday = getEffectiveToday(parent?.timezone ?? 'UTC');
-      const updated = await db.applyCycleDay(child.id, 0, realToday);
-      setChild(updated);
-      setDayFeedback('Reset to a fresh start (day 0).');
-      setTimeout(() => setDayFeedback(null), 2000);
-    } catch (e) {
-      setDayError(e instanceof Error ? e.message : 'Could not save.');
-    }
-  }
-
-  // Preview: which buckets would be tested on the entered day, using default Leitner doubling.
-  const previewDay = (() => {
-    const n = parseInt(dayInput.trim(), 10);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
-  })();
-  const previewBuckets = bucketsTestedOnDay(previewDay, DEFAULT_BUCKET_INTERVALS);
 
   async function handleReset() {
     if (!child) return;
@@ -328,49 +271,6 @@ export default function SettingsScreen() {
             disabled={!dirty || savePending}>
             <ThemedText style={styles.saveBtnText}>{savePending ? '…' : 'Save changes'}</ThemedText>
           </Pressable>
-
-          {/* Schedule — set what day of the Leitner cycle we're on */}
-          <ThemedText type="smallBold">Schedule</ThemedText>
-          <ThemedView type="backgroundElement" style={styles.section}>
-            <ThemedText themeColor="textSecondary" type="small">
-              What day of the cycle is the child on? 0 = today is day 0 (fresh start). Bumping this
-              shifts the effective &quot;today&quot; forward by that many days, so next-due math lines up
-              with where the child already is when migrating in from another app.
-            </ThemedText>
-            <View style={styles.dayInputRow}>
-              <ThemedText>Day</ThemedText>
-              <TextInput
-                value={dayInput}
-                onChangeText={setDayInput}
-                placeholder="0"
-                placeholderTextColor={theme.textSecondary}
-                keyboardType="number-pad"
-                style={[styles.numInput, { color: theme.text, borderColor: theme.textSecondary }]}
-              />
-            </View>
-            <ThemedText themeColor="textSecondary" type="small">
-              {previewDay === 0
-                ? 'On day 0, nothing is tested yet.'
-                : previewBuckets.length === 0
-                  ? `On day ${previewDay}, no buckets would be tested in a fresh-start schedule.`
-                  : `On day ${previewDay}, buckets ${previewBuckets.map(bucketLetter).join(', ')} would be tested${' '}(default Leitner schedule).`}
-            </ThemedText>
-            <View style={styles.todayBtnRow}>
-              <Pressable style={styles.outlineBtn} onPress={resetDayOffset}>
-                <ThemedText>Reset</ThemedText>
-              </Pressable>
-              <Pressable style={styles.todaySaveBtn} onPress={applyDayOffset}>
-                <ThemedText style={styles.saveBtnText}>Apply</ThemedText>
-              </Pressable>
-            </View>
-            <ThemedText themeColor="textSecondary" type="small">
-              Currently on day {appliedDay}.
-            </ThemedText>
-            {dayError && <ThemedText style={styles.error}>{dayError}</ThemedText>}
-            {dayFeedback && (
-              <ThemedText themeColor="textSecondary" type="small">{dayFeedback}</ThemedText>
-            )}
-          </ThemedView>
 
           {/* Today's review */}
           <ThemedText type="smallBold">Today&apos;s review</ThemedText>

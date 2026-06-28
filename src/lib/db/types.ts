@@ -1,6 +1,6 @@
 // DB-agnostic interface. Implementations: mock (in-memory) for dev, supabase for prod.
 
-import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domain';
+import type { Card, CardState, Child, Deck, DeckAssignment, Parent, Review } from '@/types/domain';
 
 export type CardStateWithCard = CardState & { card: Card; deck: Deck };
 
@@ -42,9 +42,10 @@ export interface DB {
   // `timezone` is the parent's IANA zone (for matching real review timestamps).
   resetTodaysReviewsForChild(childId: string, today: string, timezone: string): Promise<number>;
 
-  // Reposition a child onto cycle day `cycleDay`: persist cycle_start_date
-  // (= realToday − cycleDay, or null for day 0) and rewrite every non-graduated
-  // card_state's next_due_on via dueDateForCycleDay (no backlog). Returns the
-  // updated child. `realToday` is the real calendar day in the parent's timezone.
-  applyCycleDay(childId: string, cycleDay: number, realToday: string): Promise<Child>;
+  getDeckAssignment(deckId: string, childId: string): Promise<DeckAssignment | null>;
+  // Reposition (child, deck) onto cycle day `cycleDay`: persist
+  // deck_assignments.cycle_start_date (= realToday − cycleDay, or null for day 0)
+  // and rewrite next_due_on for that child's non-graduated cards IN THIS DECK via
+  // dueDateForCycleDay. Returns the updated assignment. `realToday` is the real day.
+  applyCycleDay(childId: string, deckId: string, cycleDay: number, realToday: string): Promise<DeckAssignment>;
 }

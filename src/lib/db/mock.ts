@@ -3,7 +3,7 @@
 
 import { addDays, dueDateForCycleDay, todayInTz } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
-import type { Card, CardState, Child, Deck, GradingMode, Parent, Review } from '@/types/domain';
+import type { Card, CardState, Child, Deck, DeckAssignment, GradingMode, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
 // Computed at module load so mock "due today" stays relative to the calendar.
@@ -16,8 +16,8 @@ const parent: Parent = {
 };
 
 const children: Child[] = [
-  { id: 'c1', parent_id: 'p1', display_name: 'Mira', avatar: '🦊', graduate_after_passes: null, cycle_start_date: null },
-  { id: 'c2', parent_id: 'p1', display_name: 'Eli', avatar: '🐻', graduate_after_passes: 3, cycle_start_date: null },
+  { id: 'c1', parent_id: 'p1', display_name: 'Mira', avatar: '🦊', graduate_after_passes: null },
+  { id: 'c2', parent_id: 'p1', display_name: 'Eli', avatar: '🐻', graduate_after_passes: 3 },
 ];
 
 const decks: Deck[] = [
@@ -26,7 +26,7 @@ const decks: Deck[] = [
   { id: 'd3', parent_id: 'p1', name: 'World Capitals', description: null, bucket_intervals_days: [1, 3, 7, 14, 30] },
 ];
 
-const assignments: { deck_id: string; child_id: string }[] = [
+const assignments: { deck_id: string; child_id: string; cycle_start_date?: string | null }[] = [
   { deck_id: 'd1', child_id: 'c1' },
   { deck_id: 'd2', child_id: 'c1' },
   { deck_id: 'd2', child_id: 'c2' },
@@ -126,22 +126,30 @@ export const mockDB: DB = {
     children[idx] = { ...children[idx], ...patch };
     return children[idx];
   },
-  async applyCycleDay(childId, cycleDay, realToday) {
-    const idx = children.findIndex((c) => c.id === childId);
-    if (idx < 0) throw new Error('Child not found');
+  async getDeckAssignment(deckId, childId): Promise<DeckAssignment | null> {
+    const a = assignments.find((x) => x.deck_id === deckId && x.child_id === childId);
+    return a
+      ? { deck_id: a.deck_id, child_id: a.child_id, cycle_start_date: a.cycle_start_date ?? null }
+      : null;
+  },
+  async applyCycleDay(childId, deckId, cycleDay, realToday): Promise<DeckAssignment> {
+    const a = assignments.find((x) => x.deck_id === deckId && x.child_id === childId);
+    if (!a) throw new Error('Deck not assigned to child');
     const cycle_start_date = cycleDay <= 0 ? null : addDays(realToday, -cycleDay);
-    children[idx] = { ...children[idx], cycle_start_date };
-    // Reschedule every non-graduated card_state against its deck's intervals.
-    for (const s of states) {
-      if (s.child_id !== childId || s.graduated_at) continue;
-      const card = cards.find((c) => c.id === s.card_id);
-      const deck = card ? decks.find((d) => d.id === card.deck_id) : undefined;
-      if (!deck) continue;
-      s.next_due_on = dueDateForCycleDay(
-        realToday, cycleDay, s.bucket_index, deck.bucket_intervals_days,
-      );
+    // Reschedule this child's non-graduated cards IN THIS DECK only. Rewrite the
+    // card dates first; set the anchor last (write-order safe + idempotent).
+    const deck = decks.find((d) => d.id === deckId);
+    const deckCardIds = new Set(cards.filter((c) => c.deck_id === deckId).map((c) => c.id));
+    if (deck) {
+      for (const s of states) {
+        if (s.child_id !== childId || s.graduated_at || !deckCardIds.has(s.card_id)) continue;
+        s.next_due_on = dueDateForCycleDay(
+          realToday, cycleDay, s.bucket_index, deck.bucket_intervals_days,
+        );
+      }
     }
-    return children[idx];
+    a.cycle_start_date = cycle_start_date;
+    return { deck_id: deckId, child_id: childId, cycle_start_date };
   },
   async deleteChild(id) {
     // Cascade: drop card_states, deck_assignments, then the child itself.

@@ -94,7 +94,8 @@ export default function ImportDeckScreen() {
       if (hasBuckets && child) {
         await db.assignDeckToChild(deck.id, child.id);
         const realToday = getEffectiveToday('UTC');
-        const cycleDay = cycleDayOf(child.cycle_start_date, realToday);
+        const assignment = await db.getDeckAssignment(deck.id, child.id);
+        const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
         for (const c of created) {
           if (c.bucket === undefined) continue;
           await db.upsertCardState({

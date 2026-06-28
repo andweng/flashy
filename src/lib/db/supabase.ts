@@ -5,11 +5,11 @@
 import { supabase } from '@/lib/supabase';
 import { addDays, dueDateForCycleDay, todayInTz } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
-import type { Card, CardState, Child, Deck, Parent, Review } from '@/types/domain';
+import type { Card, CardState, Child, Deck, DeckAssignment, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
 const PARENT_COLS = 'id, display_name, timezone';
-const CHILD_COLS = 'id, parent_id, display_name, avatar, graduate_after_passes, cycle_start_date';
+const CHILD_COLS = 'id, parent_id, display_name, avatar, graduate_after_passes';
 const DECK_COLS = 'id, parent_id, name, description, bucket_intervals_days';
 const CARD_COLS = 'id, deck_id, front, back, grading_mode, typed_alternates, choices';
 const CARD_STATE_COLS =
@@ -68,13 +68,23 @@ export const supabaseDB: DB = {
     if (error) throw error;
     return data as Child;
   },
-  async applyCycleDay(childId, cycleDay, realToday): Promise<Child> {
+  async getDeckAssignment(deckId, childId): Promise<DeckAssignment | null> {
+    const { data, error } = await supabase
+      .from('deck_assignments')
+      .select('deck_id, child_id, cycle_start_date')
+      .eq('deck_id', deckId)
+      .eq('child_id', childId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as DeckAssignment | null) ?? null;
+  },
+  async applyCycleDay(childId, deckId, cycleDay, realToday): Promise<DeckAssignment> {
     const cycle_start_date = cycleDay <= 0 ? null : addDays(realToday, -cycleDay);
 
-    // Fetch this child's non-graduated states joined to their deck intervals.
+    // This child's non-graduated states, joined to each card's deck id + intervals.
     const { data: rows, error: sErr } = await supabase
       .from('card_states')
-      .select('child_id, card_id, bucket_index, card:cards!inner(deck:decks!inner(bucket_intervals_days))')
+      .select('child_id, card_id, bucket_index, card:cards!inner(deck_id, deck:decks!inner(bucket_intervals_days))')
       .eq('child_id', childId)
       .is('graduated_at', null);
     if (sErr) throw sErr;
@@ -83,12 +93,12 @@ export const supabaseDB: DB = {
       child_id: string;
       card_id: string;
       bucket_index: number;
-      card: { deck: { bucket_intervals_days: number[] } };
+      card: { deck_id: string; deck: { bucket_intervals_days: number[] } };
     };
-    // Rewrite every card's next_due_on FIRST. If this fails partway, the child is
-    // still on their old cycle day with consistent dates; applyCycleDay is
-    // idempotent, so re-running it cleanly completes a partial reposition.
+    // Rewrite next_due_on FIRST, only for cards in THIS deck. Partial failure leaves
+    // the pair on its old day with consistent dates; the op is idempotent on retry.
     for (const r of (rows as unknown as Row[]) ?? []) {
+      if (r.card.deck_id !== deckId) continue;
       const next_due_on = dueDateForCycleDay(
         realToday, cycleDay, r.bucket_index, r.card.deck.bucket_intervals_days,
       );
@@ -100,15 +110,16 @@ export const supabaseDB: DB = {
       if (uErr) throw uErr;
     }
 
-    // Move the child onto the new cycle day LAST, and return the updated row.
-    const { data: childRow, error: cErr } = await supabase
-      .from('children')
+    // Set the per-(child, deck) anchor LAST and return it.
+    const { data: aRow, error: aErr } = await supabase
+      .from('deck_assignments')
       .update({ cycle_start_date })
-      .eq('id', childId)
-      .select(CHILD_COLS)
+      .eq('deck_id', deckId)
+      .eq('child_id', childId)
+      .select('deck_id, child_id, cycle_start_date')
       .single();
-    if (cErr) throw cErr;
-    return childRow as Child;
+    if (aErr) throw aErr;
+    return aRow as DeckAssignment;
   },
   async deleteChild(id) {
     // FK cascade handles card_states + deck_assignments.

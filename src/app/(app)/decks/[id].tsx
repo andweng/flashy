@@ -102,7 +102,8 @@ export default function DeckDetailScreen() {
       // Per-child bucket state only applies when a child is selected
       if (currentChild) {
         const realToday = getEffectiveToday('UTC');
-        const cycleDay = cycleDayOf(currentChild.cycle_start_date, realToday);
+        const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
+        const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
         await db.upsertCardState({
           child_id: currentChild.id,
           card_id: created.id,
@@ -192,7 +193,8 @@ export default function DeckDetailScreen() {
     if (!currentChild || !deck) return;
     const existing = cardStates.get(cardId);
     const realToday = getEffectiveToday('UTC');
-    const cycleDay = cycleDayOf(currentChild.cycle_start_date, realToday);
+    const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
+    const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
     const newState: CardState = {
       child_id: currentChild.id,
       card_id: cardId,
