@@ -13,7 +13,7 @@ import { getEffectiveToday } from '@/lib/today';
 import type { Child } from '@/types/domain';
 
 export default function ProfilePicker() {
-  const { ready, signedIn, signOut } = useAuth();
+  const { ready, signedIn } = useAuth();
   const router = useRouter();
   const { setChild } = useCurrentChild();
   const [children, setChildren] = useState<Child[] | null>(null);
@@ -73,15 +73,9 @@ export default function ProfilePicker() {
           <ThemedText type="title" style={styles.headerTitle} numberOfLines={1}>
             Who&apos;s playing?
           </ThemedText>
-          <View style={styles.headerActions}>
-            <Pressable onPress={() => router.push('/account')} hitSlop={8}>
-              <ThemedText themeColor="textSecondary" type="small">Settings</ThemedText>
-            </Pressable>
-            <ThemedText themeColor="textSecondary" type="small">|</ThemedText>
-            <Pressable onPress={signOut} hitSlop={8}>
-              <ThemedText themeColor="textSecondary" type="small">Sign out</ThemedText>
-            </Pressable>
-          </View>
+          <Pressable onPress={() => router.push('/account')} hitSlop={8}>
+            <ThemedText themeColor="textSecondary">Settings</ThemedText>
+          </Pressable>
         </View>
 
         <View style={styles.children}>
@@ -131,7 +125,6 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   headerTitle: { flexShrink: 1 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, flexShrink: 0 },
   children: {
     flexDirection: 'row',
     flexWrap: 'wrap',

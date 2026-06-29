@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,8 +22,9 @@ const THEME_OPTIONS: { value: Exclude<ThemePreference, 'system'>; label: string 
 
 export default function AccountScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const { preference: themePref, setPreference: setThemePref, colorScheme } = useThemePreference();
-  const { changePassword } = useAuth();
+  const { changePassword, signOut } = useAuth();
 
   const [error, setError] = useState<string | null>(null);
 
@@ -95,6 +96,11 @@ export default function AccountScreen() {
     } finally {
       setPwSaving(false);
     }
+  }
+
+  async function handleSignOut() {
+    await signOut();
+    router.replace('/');
   }
 
   return (
@@ -191,6 +197,10 @@ export default function AccountScreen() {
           </ThemedView>
 
           {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+
+          <Pressable style={styles.signOutBtn} onPress={handleSignOut}>
+            <ThemedText style={styles.signOutText}>Sign out</ThemedText>
+          </Pressable>
         </ScrollView>
 
         <Modal
@@ -264,6 +274,15 @@ const styles = StyleSheet.create({
   },
   btnDisabled: { opacity: 0.5 },
   error: { color: '#d2433f' },
+  signOutBtn: {
+    marginTop: Spacing.four,
+    padding: Spacing.three,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: '#d2433f',
+    alignItems: 'center',
+  },
+  signOutText: { color: '#d2433f', fontWeight: '600' },
   segmented: { flexDirection: 'row', gap: Spacing.two },
   segment: {
     flex: 1,
