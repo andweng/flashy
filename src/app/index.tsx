@@ -70,14 +70,16 @@ export default function ProfilePicker() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <ThemedText type="title">Who&apos;s playing?</ThemedText>
+          <ThemedText type="title" style={styles.headerTitle} numberOfLines={1}>
+            Who&apos;s playing?
+          </ThemedText>
           <View style={styles.headerActions}>
-            <Pressable onPress={() => router.push('/account')}>
-              <ThemedText themeColor="textSecondary">Settings</ThemedText>
+            <Pressable onPress={() => router.push('/account')} hitSlop={8}>
+              <ThemedText themeColor="textSecondary" type="small">Settings</ThemedText>
             </Pressable>
-            <ThemedText themeColor="textSecondary">|</ThemedText>
-            <Pressable onPress={signOut}>
-              <ThemedText themeColor="textSecondary">Sign out</ThemedText>
+            <ThemedText themeColor="textSecondary" type="small">|</ThemedText>
+            <Pressable onPress={signOut} hitSlop={8}>
+              <ThemedText themeColor="textSecondary" type="small">Sign out</ThemedText>
             </Pressable>
           </View>
         </View>
@@ -125,9 +127,11 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-end',
+    alignItems: 'center',
+    gap: Spacing.three,
   },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  headerTitle: { flexShrink: 1 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, flexShrink: 0 },
   children: {
     flexDirection: 'row',
     flexWrap: 'wrap',
