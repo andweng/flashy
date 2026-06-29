@@ -80,7 +80,7 @@ export default function HomeScreen() {
           </Link>
           <Link href="/settings" asChild>
             <Pressable style={styles.button}>
-              <ThemedText style={styles.buttonText}>Settings</ThemedText>
+              <ThemedText style={styles.buttonText}>Profile</ThemedText>
             </Pressable>
           </Link>
         </View>

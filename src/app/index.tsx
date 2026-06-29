@@ -71,9 +71,15 @@ export default function ProfilePicker() {
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
           <ThemedText type="title">Who&apos;s playing?</ThemedText>
-          <Pressable onPress={signOut}>
-            <ThemedText themeColor="textSecondary">Sign out</ThemedText>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable onPress={() => router.push('/account')}>
+              <ThemedText themeColor="textSecondary">Settings</ThemedText>
+            </Pressable>
+            <ThemedText themeColor="textSecondary">|</ThemedText>
+            <Pressable onPress={signOut}>
+              <ThemedText themeColor="textSecondary">Sign out</ThemedText>
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.children}>
@@ -121,6 +127,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-end',
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   children: {
     flexDirection: 'row',
     flexWrap: 'wrap',

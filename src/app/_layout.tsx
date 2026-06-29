@@ -12,6 +12,7 @@ function ThemedStack() {
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="add-child" options={{ title: 'Add child' }} />
+        <Stack.Screen name="account" options={{ title: 'Settings' }} />
         <Stack.Screen name="(app)" options={{ headerShown: false }} />
       </Stack>
     </ThemeProvider>

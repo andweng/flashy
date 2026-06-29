@@ -34,6 +34,12 @@ export default function DeckDetailScreen() {
   const [dayInput, setDayInput] = useState('0');
   const [dayError, setDayError] = useState<string | null>(null);
   const [dayFeedback, setDayFeedback] = useState<string | null>(null);
+  // Schedule control is collapsed by default; the summary line stands in for it.
+  const [scheduleExpanded, setScheduleExpanded] = useState(false);
+
+  // Card-list filter by bucket group (null = all groups).
+  const [groupFilter, setGroupFilter] = useState<number | null>(null);
+  const [groupFilterOpen, setGroupFilterOpen] = useState(false);
 
   // Quick-add form
   const frontRef = useRef<TextInput>(null);
@@ -292,19 +298,32 @@ export default function DeckDetailScreen() {
     const n = parseInt(dayInput.trim(), 10);
     return Number.isFinite(n) && n >= 0 ? n : 0;
   })();
-  const previewGroups =
+  const groupsForDay = (day: number) =>
     deck && currentChild
       ? dueGroupsForDeckOnDay(
           cards
             .map((c) => cardStates.get(c.id))
             .filter((s): s is CardState => s !== undefined),
           deck.bucket_intervals_days,
-          previewDay,
+          day,
           realToday,
         )
       : [];
-  const previewDue = previewGroups.filter((g) => g.due > 0);
-  const previewNotDue = previewGroups.filter((g) => g.notDue > 0);
+  const previewGroups = groupsForDay(previewDay);
+  const appliedGroups = groupsForDay(appliedDay);
+
+  // One-line due summary for a cycle day, e.g. "Day 3 — 4 cards due: A ×3, B ×1".
+  function formatDueLine(day: number, groups: ReturnType<typeof dueGroupsForDeckOnDay>): string {
+    const due = groups.filter((g) => g.due > 0);
+    const notDue = groups.filter((g) => g.notDue > 0);
+    const total = due.reduce((n, g) => n + g.due, 0);
+    if (due.length === 0) return `Day ${day}: nothing in this deck would be due.`;
+    const dueStr = due.map((g) => `${bucketLetter(g.bucket)} ×${g.due}`).join(', ');
+    const notDueStr = notDue.length
+      ? ` · not yet: ${notDue.map((g) => `${bucketLetter(g.bucket)} ×${g.notDue}`).join(', ')}`
+      : '';
+    return `Day ${day} — ${total} card${total === 1 ? '' : 's'} due: ${dueStr}${notDueStr}`;
+  }
 
   async function applyCycleDayForDeck(targetDay: number) {
     if (!deck || !currentChild) return;
@@ -350,6 +369,22 @@ export default function DeckDetailScreen() {
           .map(({ i, n }) => `${n} ${bucketLetter(i)}`)
           .join(', ')
       : '';
+
+  // Card list shown alphabetically by front, optionally narrowed to one bucket
+  // group. Buckets are per-child, so the filter only appears with a child set.
+  const sortedCards = [...cards].sort((a, b) =>
+    a.front.localeCompare(b.front, undefined, { sensitivity: 'base' }),
+  );
+  const availableGroups =
+    currentChild && cardStates.size > 0
+      ? deck.bucket_intervals_days
+          .map((_, i) => i)
+          .filter((i) => cards.some((c) => cardStates.get(c.id)?.bucket_index === i))
+      : [];
+  const visibleCards =
+    groupFilter == null
+      ? sortedCards
+      : sortedCards.filter((c) => cardStates.get(c.id)?.bucket_index === groupFilter);
 
   return (
     <ThemedView style={styles.container}>
@@ -420,45 +455,62 @@ export default function DeckDetailScreen() {
             </>
           )}
 
-          {/* Per-child schedule control */}
+          {/* Per-child schedule control (collapsed by default) */}
           {deck && currentChild && (
-            <ThemedView type="backgroundElement" style={{ padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two }}>
-              <ThemedText type="smallBold">Schedule · {currentChild.display_name}</ThemedText>
-              <ThemedText themeColor="textSecondary" type="small">
-                What day of this deck&apos;s cycle is {currentChild.display_name} on? Applying rewrites
-                this deck&apos;s due dates so the right groups come due — no backlog.
-              </ThemedText>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
-                <ThemedText>Day</ThemedText>
-                <TextInput
-                  value={dayInput}
-                  onChangeText={setDayInput}
-                  placeholder="0"
-                  placeholderTextColor={theme.textSecondary}
-                  keyboardType="number-pad"
-                  style={{ fontSize: 16, paddingVertical: Spacing.one, paddingHorizontal: Spacing.two, borderWidth: 1, borderColor: theme.textSecondary, borderRadius: Spacing.two, minWidth: 48, textAlign: 'center', color: theme.text }}
-                />
-              </View>
-              <ThemedText themeColor="textSecondary" type="small">
-                {previewDue.length === 0
-                  ? `Day ${previewDay}: nothing in this deck would be due.`
-                  : `Day ${previewDay} — ${previewDue.reduce((n, g) => n + g.due, 0)} card${previewDue.reduce((n, g) => n + g.due, 0) === 1 ? '' : 's'} due: ${previewDue.map((g) => `${bucketLetter(g.bucket)} ×${g.due}`).join(', ')}${previewNotDue.length ? ` · not yet: ${previewNotDue.map((g) => `${bucketLetter(g.bucket)} ×${g.notDue}`).join(', ')}` : ''}`}
-              </ThemedText>
-              <View style={{ flexDirection: 'row', gap: Spacing.two }}>
-                <Pressable
-                  onPress={() => applyCycleDayForDeck(0)}
-                  style={{ padding: Spacing.three, borderRadius: Spacing.two, borderWidth: 1, borderColor: '#888', alignItems: 'center' }}>
-                  <ThemedText>Reset</ThemedText>
-                </Pressable>
-                <Pressable
-                  onPress={() => applyCycleDayForDeck(previewDay)}
-                  style={{ flex: 1, backgroundColor: '#3c87f7', paddingVertical: Spacing.three, borderRadius: Spacing.two, alignItems: 'center' }}>
-                  <ThemedText style={{ color: '#fff', fontWeight: '600' }}>Apply</ThemedText>
-                </Pressable>
-              </View>
-              <ThemedText themeColor="textSecondary" type="small">Currently on day {appliedDay}.</ThemedText>
-              {dayError && <ThemedText style={{ color: '#d2433f' }}>{dayError}</ThemedText>}
-              {dayFeedback && <ThemedText themeColor="textSecondary" type="small">{dayFeedback}</ThemedText>}
+            <ThemedView type="backgroundElement" style={styles.scheduleCard}>
+              <Pressable
+                onPress={() => setScheduleExpanded((v) => !v)}
+                style={styles.scheduleHeader}>
+                <View style={styles.flex1}>
+                  <ThemedText type="smallBold">Schedule · {currentChild.display_name}</ThemedText>
+                  {!scheduleExpanded && (
+                    <ThemedText themeColor="textSecondary" type="small">
+                      {formatDueLine(appliedDay, appliedGroups)}
+                    </ThemedText>
+                  )}
+                </View>
+                <ThemedText themeColor="textSecondary">{scheduleExpanded ? '▾' : '▸'}</ThemedText>
+              </Pressable>
+
+              {scheduleExpanded && (
+                <>
+                  <ThemedText themeColor="textSecondary" type="small">
+                    What day of this deck&apos;s cycle is {currentChild.display_name} on? Applying
+                    rewrites this deck&apos;s due dates so the right groups come due — no backlog.
+                  </ThemedText>
+                  <View style={styles.dayInputRow}>
+                    <ThemedText>Day</ThemedText>
+                    <TextInput
+                      value={dayInput}
+                      onChangeText={setDayInput}
+                      placeholder="0"
+                      placeholderTextColor={theme.textSecondary}
+                      keyboardType="number-pad"
+                      style={[styles.dayInput, { borderColor: theme.textSecondary, color: theme.text }]}
+                    />
+                  </View>
+                  <ThemedText themeColor="textSecondary" type="small">
+                    {formatDueLine(previewDay, previewGroups)}
+                  </ThemedText>
+                  <View style={styles.scheduleBtnRow}>
+                    <Pressable onPress={() => applyCycleDayForDeck(0)} style={styles.scheduleResetBtn}>
+                      <ThemedText>Reset</ThemedText>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => applyCycleDayForDeck(previewDay)}
+                      style={styles.scheduleApplyBtn}>
+                      <ThemedText style={styles.scheduleApplyText}>Apply</ThemedText>
+                    </Pressable>
+                  </View>
+                  <ThemedText themeColor="textSecondary" type="small">
+                    Currently on day {appliedDay}.
+                  </ThemedText>
+                  {dayError && <ThemedText style={styles.errorText}>{dayError}</ThemedText>}
+                  {dayFeedback && (
+                    <ThemedText themeColor="textSecondary" type="small">{dayFeedback}</ThemedText>
+                  )}
+                </>
+              )}
             </ThemedView>
           )}
 
@@ -533,7 +585,53 @@ export default function DeckDetailScreen() {
             {cards.length} card{cards.length === 1 ? '' : 's'}
             {bucketBreakdown && ` (${bucketBreakdown})`}
           </ThemedText>
-          {cards.map((card) =>
+
+          {/* Filter by bucket group */}
+          {availableGroups.length > 0 && (
+            <View>
+              <Pressable
+                style={[styles.filterToggle, { borderColor: theme.textSecondary }]}
+                onPress={() => setGroupFilterOpen((v) => !v)}>
+                <ThemedText type="small">
+                  Filter:{' '}
+                  {groupFilter == null ? 'All groups' : `Group ${bucketLetter(groupFilter)}`}
+                </ThemedText>
+                <ThemedText themeColor="textSecondary">{groupFilterOpen ? '▾' : '▸'}</ThemedText>
+              </Pressable>
+              {groupFilterOpen && (
+                <ThemedView type="backgroundElement" style={styles.filterMenu}>
+                  <Pressable
+                    style={styles.filterOption}
+                    onPress={() => {
+                      setGroupFilter(null);
+                      setGroupFilterOpen(false);
+                    }}>
+                    <ThemedText style={groupFilter == null ? styles.filterOptionActive : undefined}>
+                      All groups
+                    </ThemedText>
+                  </Pressable>
+                  {availableGroups.map((i) => {
+                    const n = cards.filter((c) => cardStates.get(c.id)?.bucket_index === i).length;
+                    return (
+                      <Pressable
+                        key={i}
+                        style={styles.filterOption}
+                        onPress={() => {
+                          setGroupFilter(i);
+                          setGroupFilterOpen(false);
+                        }}>
+                        <ThemedText style={groupFilter === i ? styles.filterOptionActive : undefined}>
+                          Group {bucketLetter(i)} ({n})
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </ThemedView>
+              )}
+            </View>
+          )}
+
+          {visibleCards.map((card) =>
             editingId === card.id ? (
               <ThemedView key={card.id} type="backgroundElement" style={styles.section}>
                 <TextInput
@@ -698,6 +796,47 @@ const styles = StyleSheet.create({
   flex1: { flex: 1 },
   deckEditMultiline: { minHeight: 60, textAlignVertical: 'top' },
   section: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two },
+  scheduleCard: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two },
+  scheduleHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  dayInputRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  dayInput: {
+    fontSize: 16,
+    paddingVertical: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    borderWidth: 1,
+    borderRadius: Spacing.two,
+    minWidth: 48,
+    textAlign: 'center',
+  },
+  scheduleBtnRow: { flexDirection: 'row', gap: Spacing.two },
+  scheduleResetBtn: {
+    padding: Spacing.three,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: '#888',
+    alignItems: 'center',
+  },
+  scheduleApplyBtn: {
+    flex: 1,
+    backgroundColor: '#3c87f7',
+    paddingVertical: Spacing.three,
+    borderRadius: Spacing.two,
+    alignItems: 'center',
+  },
+  scheduleApplyText: { color: '#fff', fontWeight: '600' },
+  errorText: { color: '#d2433f' },
+  filterToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderWidth: 1,
+    borderRadius: Spacing.two,
+  },
+  filterMenu: { borderRadius: Spacing.two, padding: Spacing.one, marginTop: Spacing.one },
+  filterOption: { paddingVertical: Spacing.two, paddingHorizontal: Spacing.three },
+  filterOptionActive: { fontWeight: '700' },
   input: {
     fontSize: 16,
     paddingVertical: Spacing.two,
