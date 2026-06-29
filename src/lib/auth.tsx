@@ -14,6 +14,7 @@ type AuthState = {
   ready: boolean;
   signedIn: boolean;
   signOut: () => Promise<void>;
+  changePassword: (newPassword: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -51,6 +52,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut: async () => {
           if (USE_MOCK) return;
           await supabase.auth.signOut();
+        },
+        changePassword: async (newPassword: string) => {
+          if (USE_MOCK) throw new Error('Password change is unavailable in mock mode.');
+          const { error } = await supabase.auth.updateUser({ password: newPassword });
+          if (error) throw error;
         },
       }}>
       {children}

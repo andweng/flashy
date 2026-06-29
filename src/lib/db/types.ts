@@ -6,6 +6,7 @@ export type CardStateWithCard = CardState & { card: Card; deck: Deck };
 
 export interface DB {
   getCurrentParent(): Promise<Parent | null>;
+  updateParent(patch: Partial<Omit<Parent, 'id'>>): Promise<Parent>;
 
   listChildren(parentId: string): Promise<Child[]>;
   getChild(id: string): Promise<Child | null>;

@@ -30,6 +30,19 @@ export const supabaseDB: DB = {
     return data;
   },
 
+  async updateParent(patch): Promise<Parent> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not signed in');
+    const { data, error } = await supabase
+      .from('parents')
+      .update(patch)
+      .eq('id', user.id)
+      .select(PARENT_COLS)
+      .single();
+    if (error) throw error;
+    return data as Parent;
+  },
+
   async listChildren(parentId): Promise<Child[]> {
     const { data, error } = await supabase
       .from('children')

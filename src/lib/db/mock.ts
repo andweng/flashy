@@ -106,6 +106,10 @@ export const mockDB: DB = {
   async getCurrentParent() {
     return parent;
   },
+  async updateParent(patch) {
+    Object.assign(parent, patch);
+    return parent;
+  },
   async listChildren(parentId) {
     return children.filter((c) => c.parent_id === parentId);
   },
