@@ -11,7 +11,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { serializeDeck } from '@/lib/deck-export';
-import { bucketLetter, cycleDayOf, dueDateForCycleDay, dueGroupsForDeckOnDay } from '@/lib/leitner';
+import { bucketLetter, cycleDayOf, dueDateForCycleDay, dueGroupsForDeckOnDay, isDueOn } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
 
@@ -229,6 +229,25 @@ export default function DeckDetailScreen() {
       return next;
     });
     setBucketPickerCardId(null);
+  }
+
+  async function toggleDue(cardId: string) {
+    if (!currentChild || !deck) return;
+    const existing = cardStates.get(cardId);
+    if (!existing || existing.graduated_at) return;
+    const realToday = getEffectiveToday('UTC');
+    const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
+    const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
+    const next_due_on = isDueOn(existing, realToday)
+      ? dueDateForCycleDay(realToday, cycleDay, existing.bucket_index, deck.bucket_intervals_days)
+      : realToday;
+    const newState: CardState = { ...existing, next_due_on };
+    await db.upsertCardState(newState);
+    setCardStates((m) => {
+      const next = new Map(m);
+      next.set(cardId, newState);
+      return next;
+    });
   }
 
   async function toggleAssign(childId: string, currentlyAssigned: boolean) {
@@ -697,6 +716,18 @@ export default function DeckDetailScreen() {
                     </ThemedText>
                   </Pressable>
                   <View style={styles.rowActions}>
+                    {currentChild &&
+                      cardStates.has(card.id) &&
+                      !cardStates.get(card.id)!.graduated_at && (
+                        <Pressable
+                          onPress={() => toggleDue(card.id)}
+                          style={[
+                            styles.dueChip,
+                            isDueOn(cardStates.get(card.id)!, realToday) && styles.dueChipActive,
+                          ]}>
+                          <ThemedText type="small">Due today</ThemedText>
+                        </Pressable>
+                      )}
                     {currentChild && cardStates.has(card.id) && (
                       <Pressable
                         onPress={() =>
@@ -876,6 +907,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#888',
   },
+  dueChip: {
+    paddingVertical: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#888',
+  },
+  dueChipActive: { backgroundColor: '#3c87f720', borderColor: '#3c87f7' },
   bucketPickerRow: { flexDirection: 'row', gap: Spacing.two, paddingTop: Spacing.two },
   bucketBtn: {
     flex: 1,
