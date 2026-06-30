@@ -23,6 +23,24 @@ export default function Root({ children }: PropsWithChildren) {
         <link rel="manifest" href="/manifest.webmanifest" />
         <link rel="apple-touch-icon" href="/icon.png" />
 
+        {/* The web <body> has no background of its own, so without this it stays
+            browser-default white while the JS-themed app renders dark — dark
+            components on a white page. This makes the page background follow the
+            OS color scheme (no white flash before JS runs);
+            ThemePreferenceProvider overrides it from JS to honor a manual
+            light/dark choice that differs from the OS. */}
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+              :root { color-scheme: light dark; }
+              html, body { background-color: #ffffff; }
+              @media (prefers-color-scheme: dark) {
+                html, body { background-color: #000000; }
+              }
+            `,
+          }}
+        />
+
         <ScrollViewStyleReset />
         <script
           dangerouslySetInnerHTML={{

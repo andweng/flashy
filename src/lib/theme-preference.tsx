@@ -5,7 +5,9 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Appearance, useColorScheme as useSystemColorScheme } from 'react-native';
+import { Appearance, Platform, useColorScheme as useSystemColorScheme } from 'react-native';
+
+import { Colors } from '@/constants/theme';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type ResolvedScheme = 'light' | 'dark';
@@ -44,6 +46,16 @@ export function ThemePreferenceProvider({ children }: { children: React.ReactNod
 
   const colorScheme: ResolvedScheme =
     preference === 'system' ? (system === 'dark' ? 'dark' : 'light') : preference;
+
+  // On web, drive the document/page background from the resolved scheme so a
+  // manual light/dark choice (which the prefers-color-scheme CSS in +html.tsx
+  // can't see) doesn't leave the <body> mismatched with the themed app.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const bg = Colors[colorScheme].background;
+    document.documentElement.style.backgroundColor = bg;
+    document.body.style.backgroundColor = bg;
+  }, [colorScheme]);
 
   const value = useMemo(
     () => ({ preference, setPreference, colorScheme }),
