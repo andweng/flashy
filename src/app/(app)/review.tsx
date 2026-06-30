@@ -399,7 +399,7 @@ const styles = StyleSheet.create({
   pass: { backgroundColor: '#2eab63', borderColor: '#2eab63' },
   fail: { backgroundColor: '#d2433f', borderColor: '#d2433f' },
   buttonText: { color: '#ffffff', fontWeight: '600' },
-  completionButton: { flex: 0 },
+  completionButton: { flex: 0, paddingVertical: Spacing.four },
 });
 
 const progressStyles = StyleSheet.create({
