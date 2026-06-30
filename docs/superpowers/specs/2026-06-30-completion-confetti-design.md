@@ -94,6 +94,24 @@ In `src/app/(app)/review.tsx`, `CompletionScreen`:
   meaningfully assertable in a unit test); correctness is verified by running the
   app and finishing a session.
 
+## Addendum (2026-06-30): tap-to-replay + button fix
+
+Two follow-up changes requested after the initial build:
+
+1. **Tap the 🎉 to replay confetti (Done screen only).** The `🎉` in the
+   "Done! 🎉" title becomes tappable; each tap re-fires the confetti. The
+   "All caught up!" screen is unchanged (still no confetti, no emoji).
+   Implemented by keying the overlay (`<Confetti key={burst} />`) and bumping a
+   `burst` counter on tap — a key change remounts `Confetti`, which auto-plays
+   on mount and regenerates fresh random particles. No change to `confetti.tsx`.
+
+2. **Fix the "Back home" button height.** `styles.button` sets `flex: 1` (needed
+   to split width in the review screen's dual-button row). On the completion
+   screen's centered column that makes the lone button stretch the full screen
+   height. Fix: give `PrimaryButton` an optional `style` prop and pass `flex: 0`
+   for the completion button only; other `PrimaryButton`/dual-button usages keep
+   `flex: 1`.
+
 ## Out of scope (YAGNI)
 
 - Haptics / sound.

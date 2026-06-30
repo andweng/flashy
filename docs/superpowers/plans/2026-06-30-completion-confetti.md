@@ -294,6 +294,212 @@ git commit -m "Fire confetti on completed review session"
 
 ---
 
+### Task 3: Tap-to-replay confetti + fix Back-home button height
+
+**Files:**
+- Modify: `src/app/(app)/review.tsx` (`CompletionScreen` ~lines 249-280; `PrimaryButton` ~lines 322-328; `styles`)
+
+**Interfaces:**
+- Consumes: `Confetti` from `@/components/confetti` (already imported in Task 2).
+  `ThemedText` (from `@/components/themed-text`) forwards `onPress` to the
+  underlying RN `Text` (it spreads `...rest`), so a nested `<ThemedText onPress>`
+  is a valid tap target.
+- Produces: nothing new (behavior + style change only).
+
+**Behavior:**
+- Tapping the `🎉` on the "Done! 🎉" completion screen re-fires the confetti.
+  The "All caught up!" (`total === 0`) screen is untouched.
+- The "Back home" button no longer stretches to full screen height.
+
+- [ ] **Step 1: Add `StyleProp` / `ViewStyle` type imports**
+
+In `src/app/(app)/review.tsx`, change the `react-native` import:
+
+```tsx
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+```
+
+to:
+
+```tsx
+import {
+  Pressable,
+  StyleSheet,
+  TextInput,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
+```
+
+(`useState` is already imported from `react` at the top — no change there.)
+
+- [ ] **Step 2: Add an optional `style` prop to `PrimaryButton`**
+
+Replace the current `PrimaryButton`:
+
+```tsx
+function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable style={[styles.button, styles.primary]} onPress={onPress}>
+      <ThemedText style={styles.buttonText}>{label}</ThemedText>
+    </Pressable>
+  );
+}
+```
+
+with:
+
+```tsx
+function PrimaryButton({
+  label,
+  onPress,
+  style,
+}: {
+  label: string;
+  onPress: () => void;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <Pressable style={[styles.button, styles.primary, style]} onPress={onPress}>
+      <ThemedText style={styles.buttonText}>{label}</ThemedText>
+    </Pressable>
+  );
+}
+```
+
+The optional `style` is applied last so callers can override. Existing callers
+(`Show answer`, `Check`) pass no `style`, so they keep `flex: 1` unchanged.
+
+- [ ] **Step 3: Update `CompletionScreen` — burst counter, tappable emoji, keyed + style**
+
+Replace the whole `CompletionScreen` body return (currently keyed off `total`):
+
+```tsx
+function CompletionScreen({
+  passes,
+  fails,
+  onDone,
+}: {
+  passes: number;
+  fails: number;
+  onDone: () => void;
+}) {
+  const total = passes + fails;
+  return (
+    <ThemedView style={styles.container}>
+      <SafeAreaView style={[styles.safe, styles.centered]}>
+        {total === 0 ? (
+          <>
+            <ThemedText type="title">All caught up!</ThemedText>
+            <ThemedText themeColor="textSecondary">Nothing was due. Come back tomorrow.</ThemedText>
+          </>
+        ) : (
+          <>
+            <ThemedText type="title">Done! 🎉</ThemedText>
+            <ThemedText type="subtitle">
+              {passes} passed · {fails} missed
+            </ThemedText>
+          </>
+        )}
+        <PrimaryButton label="Back home" onPress={onDone} />
+      </SafeAreaView>
+      {total > 0 && <Confetti />}
+    </ThemedView>
+  );
+}
+```
+
+with:
+
+```tsx
+function CompletionScreen({
+  passes,
+  fails,
+  onDone,
+}: {
+  passes: number;
+  fails: number;
+  onDone: () => void;
+}) {
+  const total = passes + fails;
+  const [burst, setBurst] = useState(0);
+  return (
+    <ThemedView style={styles.container}>
+      <SafeAreaView style={[styles.safe, styles.centered]}>
+        {total === 0 ? (
+          <>
+            <ThemedText type="title">All caught up!</ThemedText>
+            <ThemedText themeColor="textSecondary">Nothing was due. Come back tomorrow.</ThemedText>
+          </>
+        ) : (
+          <>
+            <ThemedText type="title">
+              Done!{' '}
+              <ThemedText type="title" onPress={() => setBurst((b) => b + 1)}>
+                🎉
+              </ThemedText>
+            </ThemedText>
+            <ThemedText type="subtitle">
+              {passes} passed · {fails} missed
+            </ThemedText>
+          </>
+        )}
+        <PrimaryButton label="Back home" onPress={onDone} style={styles.completionButton} />
+      </SafeAreaView>
+      {total > 0 && <Confetti key={burst} />}
+    </ThemedView>
+  );
+}
+```
+
+Notes:
+- `burst` starts at 0, so the initial mount auto-plays the first burst exactly as
+  before. Each tap increments `burst`, which changes the `<Confetti>` `key`,
+  remounting it — `Confetti` auto-plays on mount with freshly randomized
+  particles, so every tap is a new explosion.
+- The inner `<ThemedText type="title" onPress=...>` keeps the title font size (48)
+  so the emoji doesn't shrink; only the emoji is the tap target.
+
+- [ ] **Step 4: Add the `completionButton` style**
+
+In the `styles` `StyleSheet.create({ ... })` block (the one that holds `button`,
+`primary`, etc.), add:
+
+```tsx
+  completionButton: { flex: 0 },
+```
+
+In React Native `flex: 0` sizes the element to its content (no grow/shrink),
+overriding the `flex: 1` from `styles.button` so the button is its natural height
+and width instead of filling the centered column.
+
+- [ ] **Step 5: Typecheck**
+
+Run: `npx tsc --noEmit`
+Expected: exits 0, no errors.
+
+- [ ] **Step 6: Lint**
+
+Run: `npm run lint`
+Expected: no errors.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/app/(app)/review.tsx
+git commit -m "Tap the Done emoji to replay confetti; fix Back-home button height"
+```
+
+- [ ] **Step 8: Manual run verification (controller/user, not the implementer)**
+
+Finish a session with reviewed cards. **Expect:** confetti auto-fires once;
+tapping the `🎉` re-fires it each tap; the "Back home" button is a normal-height
+button (not full-screen), still tappable. The "All caught up!" screen still shows
+no confetti.
+
+---
+
 ## Notes for the implementer
 
 - `Math.*` and string-template construction are valid inside Reanimated worklets;
