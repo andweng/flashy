@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Confetti } from '@/components/confetti';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
@@ -273,6 +274,7 @@ function CompletionScreen({
         )}
         <PrimaryButton label="Back home" onPress={onDone} />
       </SafeAreaView>
+      {total > 0 && <Confetti />}
     </ThemedView>
   );
 }
