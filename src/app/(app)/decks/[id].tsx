@@ -48,6 +48,9 @@ export default function DeckDetailScreen() {
   const [mode, setMode] = useState<GradingMode>('self_grade');
   // Sticky across adds — picking E once lets you batch-add E cards
   const [addBucket, setAddBucket] = useState(0);
+  // Sticky across adds — when on, new cards are forced due today instead of
+  // entering on their natural schedule.
+  const [addDueToday, setAddDueToday] = useState(false);
   const [addPending, setAddPending] = useState(false);
 
   // Inline deck editing (name + description)
@@ -119,14 +122,18 @@ export default function DeckDetailScreen() {
       });
       // Per-child bucket state only applies when a child is selected
       if (currentChild) {
-        const realToday = getEffectiveToday('UTC');
+        // Match the timezone every due-ness reader uses (review/home/queue),
+        // so an "add due today" card actually lands in today's queue.
+        const realToday = getEffectiveToday(scheduleTz);
         const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
         const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
         await db.upsertCardState({
           child_id: currentChild.id,
           card_id: created.id,
           bucket_index: addBucket,
-          next_due_on: dueDateForCycleDay(realToday, cycleDay, addBucket, deck.bucket_intervals_days),
+          next_due_on: addDueToday
+            ? realToday
+            : dueDateForCycleDay(realToday, cycleDay, addBucket, deck.bucket_intervals_days),
           consecutive_passes_in_top_bucket: 0,
           graduated_at: null,
           last_reviewed_at: null,
@@ -585,6 +592,12 @@ export default function DeckDetailScreen() {
                     </Pressable>
                   ))}
                 </View>
+                <Pressable
+                  onPress={() => setAddDueToday((v) => !v)}
+                  disabled={addPending}
+                  style={[styles.dueChip, styles.dueChipInline, addDueToday && styles.dueChipActive]}>
+                  <ThemedText type="small">Due today</ThemedText>
+                </Pressable>
               </View>
             )}
             <Pressable
@@ -915,6 +928,7 @@ const styles = StyleSheet.create({
     borderColor: '#888',
   },
   dueChipActive: { backgroundColor: '#3c87f720', borderColor: '#3c87f7' },
+  dueChipInline: { alignSelf: 'flex-start' },
   bucketPickerRow: { flexDirection: 'row', gap: Spacing.two, paddingTop: Spacing.two },
   bucketBtn: {
     flex: 1,
