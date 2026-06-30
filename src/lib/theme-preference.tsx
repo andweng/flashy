@@ -5,7 +5,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { useColorScheme as useSystemColorScheme } from 'react-native';
+import { Appearance, useColorScheme as useSystemColorScheme } from 'react-native';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type ResolvedScheme = 'light' | 'dark';
@@ -21,7 +21,11 @@ type ThemePreferenceContextValue = {
 const ThemePreferenceContext = createContext<ThemePreferenceContextValue | null>(null);
 
 export function ThemePreferenceProvider({ children }: { children: React.ReactNode }) {
-  const system = useSystemColorScheme();
+  // useColorScheme() can return null on the first render(s) and, on a cold start,
+  // may only resolve via an Appearance change event that never fires — leaving a
+  // dark device stuck on light. Reading Appearance synchronously patches that
+  // initial null; the hook still drives live updates once it has a value.
+  const system = useSystemColorScheme() ?? Appearance.getColorScheme();
   const [preference, setPreferenceState] = useState<ThemePreference>('system');
 
   useEffect(() => {
@@ -62,7 +66,7 @@ export function useThemePreference(): ThemePreferenceContextValue {
 // system scheme when no provider is mounted (e.g. static web render).
 export function useResolvedColorScheme(): ResolvedScheme {
   const ctx = useContext(ThemePreferenceContext);
-  const system = useSystemColorScheme();
+  const system = useSystemColorScheme() ?? Appearance.getColorScheme();
   if (ctx) return ctx.colorScheme;
   return system === 'dark' ? 'dark' : 'light';
 }
