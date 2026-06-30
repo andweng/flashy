@@ -235,7 +235,7 @@ export default function DeckDetailScreen() {
     if (!currentChild || !deck) return;
     const existing = cardStates.get(cardId);
     if (!existing || existing.graduated_at) return;
-    const realToday = getEffectiveToday('UTC');
+    const realToday = getEffectiveToday(scheduleTz);
     const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
     const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
     const next_due_on = isDueOn(existing, realToday)
