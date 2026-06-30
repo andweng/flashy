@@ -1,6 +1,13 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  TextInput,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Confetti } from '@/components/confetti';
@@ -256,6 +263,7 @@ function CompletionScreen({
   onDone: () => void;
 }) {
   const total = passes + fails;
+  const [burst, setBurst] = useState(0);
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={[styles.safe, styles.centered]}>
@@ -266,15 +274,20 @@ function CompletionScreen({
           </>
         ) : (
           <>
-            <ThemedText type="title">Done! 🎉</ThemedText>
+            <ThemedText type="title">
+              Done!{' '}
+              <ThemedText type="title" onPress={() => setBurst((b) => b + 1)}>
+                🎉
+              </ThemedText>
+            </ThemedText>
             <ThemedText type="subtitle">
               {passes} passed · {fails} missed
             </ThemedText>
           </>
         )}
-        <PrimaryButton label="Back home" onPress={onDone} />
+        <PrimaryButton label="Back home" onPress={onDone} style={styles.completionButton} />
       </SafeAreaView>
-      {total > 0 && <Confetti />}
+      {total > 0 && <Confetti key={burst} />}
     </ThemedView>
   );
 }
@@ -321,9 +334,17 @@ function TypedAnswerArea({
   );
 }
 
-function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+function PrimaryButton({
+  label,
+  onPress,
+  style,
+}: {
+  label: string;
+  onPress: () => void;
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
-    <Pressable style={[styles.button, styles.primary]} onPress={onPress}>
+    <Pressable style={[styles.button, styles.primary, style]} onPress={onPress}>
       <ThemedText style={styles.buttonText}>{label}</ThemedText>
     </Pressable>
   );
@@ -378,6 +399,7 @@ const styles = StyleSheet.create({
   pass: { backgroundColor: '#2eab63', borderColor: '#2eab63' },
   fail: { backgroundColor: '#d2433f', borderColor: '#d2433f' },
   buttonText: { color: '#ffffff', fontWeight: '600' },
+  completionButton: { flex: 0 },
 });
 
 const progressStyles = StyleSheet.create({
