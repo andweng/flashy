@@ -52,7 +52,7 @@ Self-contained overlay component.
 
 ### `makeParticles(count)` — pure helper
 
-Lives in the same file (or a sibling `confetti-particles.ts`). Returns an array
+Lives in the same `confetti.tsx` file, exported for testing. Returns an array
 of particle configs:
 
 ```ts
