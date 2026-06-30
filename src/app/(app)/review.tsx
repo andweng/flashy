@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -263,20 +263,40 @@ function CompletionScreen({
   onDone: () => void;
 }) {
   const total = passes + fails;
-  const [burst, setBurst] = useState(0);
+  // Each launch is its own Confetti instance so taps stack additively instead of
+  // replacing the previous burst. The "Done!" screen auto-fires one on mount;
+  // "All done!" fires only when its emoji is tapped. Each instance removes itself
+  // once finished (onDone) so the list doesn't grow without bound.
+  const [bursts, setBursts] = useState<number[]>(() => (total > 0 ? [0] : []));
+  const nextBurstId = useRef(1);
+
+  function launchConfetti() {
+    const id = nextBurstId.current;
+    nextBurstId.current += 1;
+    setBursts((b) => [...b, id]);
+  }
+  function removeBurst(id: number) {
+    setBursts((b) => b.filter((x) => x !== id));
+  }
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={[styles.safe, styles.centered]}>
         {total === 0 ? (
           <>
-            <ThemedText type="title">All caught up!</ThemedText>
+            <ThemedText type="title">
+              All done!{' '}
+              <ThemedText type="title" onPress={launchConfetti}>
+                🎉
+              </ThemedText>
+            </ThemedText>
             <ThemedText themeColor="textSecondary">Nothing was due. Come back tomorrow.</ThemedText>
           </>
         ) : (
           <>
             <ThemedText type="title">
               Done!{' '}
-              <ThemedText type="title" onPress={() => setBurst((b) => b + 1)}>
+              <ThemedText type="title" onPress={launchConfetti}>
                 🎉
               </ThemedText>
             </ThemedText>
@@ -287,7 +307,9 @@ function CompletionScreen({
         )}
         <PrimaryButton label="Back home" onPress={onDone} style={styles.completionButton} />
       </SafeAreaView>
-      {total > 0 && <Confetti key={burst} />}
+      {bursts.map((id) => (
+        <Confetti key={id} onDone={() => removeBurst(id)} />
+      ))}
     </ThemedView>
   );
 }
@@ -392,6 +414,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     borderRadius: Spacing.two,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#888',
   },
@@ -399,7 +422,7 @@ const styles = StyleSheet.create({
   pass: { backgroundColor: '#2eab63', borderColor: '#2eab63' },
   fail: { backgroundColor: '#d2433f', borderColor: '#d2433f' },
   buttonText: { color: '#ffffff', fontWeight: '600' },
-  completionButton: { flex: 0, paddingVertical: Spacing.four },
+  completionButton: { flex: 0, minHeight: 56 },
 });
 
 const progressStyles = StyleSheet.create({

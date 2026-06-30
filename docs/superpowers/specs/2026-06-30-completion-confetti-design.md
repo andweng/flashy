@@ -112,9 +112,29 @@ Two follow-up changes requested after the initial build:
    for the completion button only; other `PrimaryButton`/dual-button usages keep
    `flex: 1`.
 
+## Addendum 2 (2026-06-30): additive bursts + both completion states
+
+Supersedes parts of Addendum 1 per follow-up requests:
+
+1. **Both completion states get a tappable 🎉.** The empty-session screen now
+   reads "All done! 🎉" with a tappable emoji that fires confetti; the reviewed
+   screen keeps "Done! 🎉". The reviewed screen still auto-fires one burst on
+   mount; the empty screen is tap-only (no auto-burst).
+
+2. **Bursts are additive.** Tapping no longer remounts a single overlay (which
+   discarded the in-flight burst). Instead `CompletionScreen` keeps a list of
+   active burst ids and renders one `<Confetti>` per id, so taps stack and
+   overlap. `Confetti` gains an `onDone` callback (fired after `duration`) so
+   each instance removes itself from the list once finished — additive while
+   live, bounded over time.
+
+3. **"Back home" button centering.** `styles.button` was missing
+   `justifyContent: 'center'`, leaving the label vertically off in a taller
+   button; added it. The completion button uses `minHeight: 56` (replacing the
+   earlier `paddingVertical` bump) for a consistent, comfortable height.
+
 ## Out of scope (YAGNI)
 
 - Haptics / sound.
 - Per-card confetti on individual passes.
-- Confetti on the "All caught up!" empty-session screen.
 - Configurable palette via props/theme beyond the built-in set.

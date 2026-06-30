@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated, {
   Easing,
@@ -96,16 +96,30 @@ function ConfettiPiece({
 export function Confetti({
   count = 50,
   duration = 1800,
+  onDone,
 }: {
   count?: number;
   duration?: number;
+  // Called once the burst has finished animating. Lets a parent that renders
+  // one Confetti per launch drop the finished one so they accumulate additively
+  // while live, without growing the tree unbounded.
+  onDone?: () => void;
 }) {
   const { width, height } = useWindowDimensions();
   const particles = useMemo(() => makeParticles(count), [count]);
   const progress = useSharedValue(0);
 
+  // Keep the latest onDone without retriggering the mount animation when a
+  // parent passes a fresh inline callback each render.
+  const onDoneRef = useRef(onDone);
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
+
   useEffect(() => {
     progress.value = withTiming(1, { duration, easing: Easing.linear });
+    const timer = setTimeout(() => onDoneRef.current?.(), duration);
+    return () => clearTimeout(timer);
   }, [duration, progress]);
 
   const originX = width / 2;
