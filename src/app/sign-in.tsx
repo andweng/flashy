@@ -1,3 +1,4 @@
+import * as Linking from 'expo-linking';
 import { Redirect } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
@@ -37,7 +38,16 @@ export default function SignInScreen() {
     setInfo(null);
     try {
       if (mode === 'sign_up') {
-        const { data, error: e } = await supabase.auth.signUp({ email, password });
+        // Without emailRedirectTo, Supabase builds the confirmation link from the
+        // dashboard Site URL (defaults to http://localhost:3000). createURL('/')
+        // resolves to the running origin: https://flashy.weng.dev/ in web prod,
+        // localhost in web dev, the flashy:// scheme on native. The target must
+        // also be allow-listed in Supabase Auth → URL Configuration.
+        const { data, error: e } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: Linking.createURL('/') },
+        });
         if (e) throw e;
         if (!data.session) {
           setInfo('Check your email to confirm your account, then sign in.');
