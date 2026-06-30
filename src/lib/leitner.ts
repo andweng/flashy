@@ -104,6 +104,12 @@ export function dueGroupsForDeckOnDay(
     .map(([bucket, v]) => ({ bucket, due: v.due, notDue: v.notDue }));
 }
 
+// True iff the card is due on `today` (due today or overdue) and not graduated.
+// Mirrors the review-queue filter (graduated_at is null AND next_due_on <= today).
+export function isDueOn(state: CardState, today: string): boolean {
+  return !state.graduated_at && state.next_due_on <= today;
+}
+
 // How many reviews a card owes by `today`. 0 if not due, ≥1 if due (incl. backlog).
 export function owedReviews(state: CardState, deck: Deck, today: string): number {
   if (state.graduated_at) return 0;
