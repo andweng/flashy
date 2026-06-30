@@ -57,7 +57,7 @@ function ConfettiPiece({
 }: ConfettiPieceProps) {
   const animatedStyle = useAnimatedStyle(() => {
     const delayFrac = particle.delay / duration;
-    const raw = (progress.value - delayFrac) / (1 - delayFrac);
+    const raw = delayFrac >= 1 ? 1 : (progress.value - delayFrac) / (1 - delayFrac);
     const p = raw < 0 ? 0 : raw > 1 ? 1 : raw;
     const eased = 1 - (1 - p) * (1 - p); // easeOutQuad: shoot out, then slow
     const tx = Math.cos(particle.angle) * particle.distance * eased;
