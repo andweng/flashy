@@ -197,7 +197,7 @@ export default function DecksScreen() {
                 </Pressable>
               </Link>
               <Link href="/decks/new" asChild>
-                <Pressable style={[styles.actionBtn, styles.actionPrimary]}>
+                <Pressable style={StyleSheet.flatten([styles.actionBtn, styles.actionPrimary])}>
                   <ThemedText style={styles.actionPrimaryText}>Create new deck</ThemedText>
                 </Pressable>
               </Link>
