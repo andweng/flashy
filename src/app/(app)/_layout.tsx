@@ -4,13 +4,15 @@ import { useEffect } from 'react';
 import { useCurrentChild } from '@/lib/current-child';
 
 export default function AppLayout() {
-  const { child } = useCurrentChild();
+  const { child, hydrated } = useCurrentChild();
   const router = useRouter();
 
-  // Guard: if we land here without a selected child, bounce to the picker.
+  // Guard: if we land here without a selected child, bounce to the picker — but
+  // wait for the persisted selection to load first, or a refresh would bounce
+  // before it can be restored.
   useEffect(() => {
-    if (!child) router.replace('/');
-  }, [child, router]);
+    if (hydrated && !child) router.replace('/');
+  }, [child, hydrated, router]);
 
   return (
     <Stack>

@@ -18,6 +18,11 @@ import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { applyReview, bucketLetter, checkTypedAnswer } from '@/lib/leitner';
+import {
+  clearReviewSession,
+  loadReviewSession,
+  saveReviewSession,
+} from '@/lib/review-session';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Deck } from '@/types/domain';
 
@@ -65,13 +70,28 @@ export default function ReviewScreen() {
 
   useEffect(() => {
     if (!child) return;
+    const childId = child.id;
+    let cancelled = false;
     void (async () => {
       const parent = await db.getCurrentParent();
       const tz = parent?.timezone ?? 'UTC';
       const _today = getEffectiveToday(tz);
-      setToday(_today);
 
-      const due = await db.listDueCardStatesForChild(child.id, _today);
+      // Resume an in-progress session for this child+day (survives a refresh)
+      // before falling back to building a fresh queue from what's due.
+      const saved = await loadReviewSession(childId, _today);
+      if (cancelled) return;
+      if (saved) {
+        setToday(_today);
+        setItems(saved.items);
+        setIndex(saved.index);
+        setPasses(saved.passes);
+        setFails(saved.fails);
+        return;
+      }
+
+      const due = await db.listDueCardStatesForChild(childId, _today);
+      if (cancelled) return;
       // One item per due card — no backlog stacking. Strip the joined card/deck so
       // `state` is a pure CardState; otherwise those objects ride along through
       // applyReview's spread into the card_states upsert as non-existent columns,
@@ -80,8 +100,30 @@ export default function ReviewScreen() {
         const { card, deck, ...state } = s;
         return { state, card, deck };
       });
-      setItems(orderWithinBuckets(queue));
+      const ordered = orderWithinBuckets(queue);
+      setToday(_today);
+      setItems(ordered);
+      setIndex(0);
+      setPasses(0);
+      setFails(0);
+      // Snapshot the fresh queue so a refresh mid-session resumes this exact
+      // order/position; nothing due means nothing to resume.
+      if (ordered.length > 0) {
+        saveReviewSession(childId, {
+          version: 1,
+          today: _today,
+          items: ordered,
+          index: 0,
+          passes: 0,
+          fails: 0,
+        });
+      } else {
+        clearReviewSession(childId);
+      }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [child]);
 
   if (!child || !items) {
@@ -118,23 +160,50 @@ export default function ReviewScreen() {
       user_input: input,
     });
 
-    if (outcome === 'pass') setPasses((p) => p + 1);
-    else setFails((f) => f + 1);
-
-    setIndex(index + 1);
+    const nextPasses = outcome === 'pass' ? passes + 1 : passes;
+    const nextFails = outcome === 'fail' ? fails + 1 : fails;
+    const nextIndex = index + 1;
+    setPasses(nextPasses);
+    setFails(nextFails);
+    setIndex(nextIndex);
     setRevealed(false);
     setTypedInput('');
     setTypedResult(null);
+
+    // Persist the new position/tally so a refresh resumes here. Reaching the end
+    // finishes the session, so drop it rather than resurrecting the done screen.
+    if (nextIndex >= items.length) {
+      clearReviewSession(child.id);
+    } else {
+      saveReviewSession(child.id, {
+        version: 1,
+        today,
+        items,
+        index: nextIndex,
+        passes: nextPasses,
+        fails: nextFails,
+      });
+    }
   }
 
   // Defer the current card: rotate it to the end of the queue and show the next.
   function moveToBack() {
-    if (!items || items.length - index <= 1) return;
+    if (!child || !items || items.length - index <= 1) return;
     const cur = items[index];
-    setItems([...items.slice(0, index), ...items.slice(index + 1), cur]);
+    const reordered = [...items.slice(0, index), ...items.slice(index + 1), cur];
+    setItems(reordered);
     setRevealed(false);
     setTypedInput('');
     setTypedResult(null);
+    // Persist the new order so a refresh resumes with the same next card.
+    saveReviewSession(child.id, {
+      version: 1,
+      today,
+      items: reordered,
+      index,
+      passes,
+      fails,
+    });
   }
 
   function checkTyped() {

@@ -34,7 +34,8 @@
       "Bash(echo \"  _expo refs: $\\(curl -sS 'https://flashy.pages.dev/')",
       "Bash(npx tsc *)",
       "WebFetch(domain:docs.expo.dev)",
-      "Bash(npx expo *)"
+      "Bash(npx expo *)",
+      "Bash(echo \"---EXIT $?---\")"
     ]
   }
 }
