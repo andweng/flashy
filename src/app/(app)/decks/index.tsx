@@ -1,6 +1,6 @@
 import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -22,6 +22,10 @@ export default function DecksScreen() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [index, setIndex] = useState<CardHit[]>([]);
   const [query, setQuery] = useState('');
+  // Inline picker for enabling a deck the parent owns but isn't in rotation.
+  const [addExistingOpen, setAddExistingOpen] = useState(false);
+  // Two-tap confirm before removing a deck from rotation (id of the armed deck).
+  const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -70,31 +74,31 @@ export default function DecksScreen() {
   );
   const deckHitCount = useMemo(() => new Set(hits.map((h) => h.deckId)).size, [hits]);
 
-  async function toggleAssign(deck: Deck, current: boolean) {
+  const activeRows = rows?.filter((r) => r.assigned) ?? [];
+  const inactiveRows = rows?.filter((r) => !r.assigned) ?? [];
+
+  async function enableDeck(deck: Deck) {
     if (!child) return;
-    if (current) await db.unassignDeckFromChild(deck.id, child.id);
-    else await db.assignDeckToChild(deck.id, child.id);
-    setRows((rs) => rs?.map((r) => (r.deck.id === deck.id ? { ...r, assigned: !current } : r)) ?? null);
+    await db.assignDeckToChild(deck.id, child.id);
+    setRows((rs) => rs?.map((r) => (r.deck.id === deck.id ? { ...r, assigned: true } : r)) ?? null);
+  }
+
+  // First tap arms the confirm; second tap actually removes it from rotation.
+  async function removeFromRotation(deck: Deck) {
+    if (!child) return;
+    if (confirmingRemoveId !== deck.id) {
+      setConfirmingRemoveId(deck.id);
+      return;
+    }
+    setConfirmingRemoveId(null);
+    await db.unassignDeckFromChild(deck.id, child.id);
+    setRows((rs) => rs?.map((r) => (r.deck.id === deck.id ? { ...r, assigned: false } : r)) ?? null);
   }
 
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <ThemedText type="title">Decks</ThemedText>
-          <View style={styles.headerActions}>
-            <Link href="/decks/import" asChild>
-              <Pressable>
-                <ThemedText themeColor="textSecondary">Import</ThemedText>
-              </Pressable>
-            </Link>
-            <Link href="/decks/new" asChild>
-              <Pressable>
-                <ThemedText themeColor="textSecondary">+ New</ThemedText>
-              </Pressable>
-            </Link>
-          </View>
-        </View>
+        <ThemedText type="title">Decks</ThemedText>
 
         <TextInput
           value={query}
@@ -125,26 +129,79 @@ export default function DecksScreen() {
           </ScrollView>
         ) : (
           <ScrollView contentContainerStyle={styles.results} keyboardShouldPersistTaps="handled">
-            {rows?.length === 0 && (
-              <ThemedText themeColor="textSecondary">
-                No decks yet — create one to get started.
-              </ThemedText>
-            )}
+            {rows != null &&
+              (activeRows.length === 0 ? (
+                <ThemedText themeColor="textSecondary">
+                  No active decks yet. Add, import, or create one below.
+                </ThemedText>
+              ) : (
+                activeRows.map(({ deck, cardCount }) => (
+                  <ThemedView key={deck.id} type="backgroundElement" style={styles.row}>
+                    <Pressable style={styles.rowMain} onPress={() => router.push(`/decks/${deck.id}`)}>
+                      <ThemedText>{deck.name}</ThemedText>
+                      <ThemedText themeColor="textSecondary" type="small">
+                        {cardCount} card{cardCount === 1 ? '' : 's'}
+                      </ThemedText>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => removeFromRotation(deck)}
+                      hitSlop={8}
+                      style={styles.removeBtn}>
+                      {confirmingRemoveId === deck.id ? (
+                        <ThemedText type="small" style={styles.removeConfirmText}>
+                          Tap to confirm
+                        </ThemedText>
+                      ) : (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Remove
+                        </ThemedText>
+                      )}
+                    </Pressable>
+                  </ThemedView>
+                ))
+              ))}
 
-            {rows?.map(({ deck, assigned, cardCount }) => (
-              <ThemedView key={deck.id} type="backgroundElement" style={styles.row}>
-                <Pressable style={styles.rowMain} onPress={() => router.push(`/decks/${deck.id}`)}>
-                  <ThemedText>{deck.name}</ThemedText>
-                  <ThemedText themeColor="textSecondary" type="small">
-                    {cardCount} card{cardCount === 1 ? '' : 's'}
-                    {child && (assigned ? ` · in ${child.display_name}'s rotation` : '')}
+            {/* Add decks */}
+            <View style={styles.addSection}>
+              <ThemedText type="smallBold">Add decks</ThemedText>
+
+              <Pressable onPress={() => setAddExistingOpen((v) => !v)} style={styles.actionBtn}>
+                <ThemedText>Add existing deck {addExistingOpen ? '▾' : '▸'}</ThemedText>
+              </Pressable>
+              {addExistingOpen &&
+                (inactiveRows.length === 0 ? (
+                  <ThemedText themeColor="textSecondary" type="small" style={styles.addHint}>
+                    No other decks — import or create one below.
                   </ThemedText>
+                ) : (
+                  inactiveRows.map(({ deck, cardCount }) => (
+                    <ThemedView key={deck.id} type="backgroundElement" style={styles.row}>
+                      <Pressable
+                        style={styles.rowMain}
+                        onPress={() => router.push(`/decks/${deck.id}`)}>
+                        <ThemedText>{deck.name}</ThemedText>
+                        <ThemedText themeColor="textSecondary" type="small">
+                          {cardCount} card{cardCount === 1 ? '' : 's'}
+                        </ThemedText>
+                      </Pressable>
+                      <Pressable onPress={() => enableDeck(deck)} style={styles.enableBtn}>
+                        <ThemedText style={styles.enableBtnText}>Add</ThemedText>
+                      </Pressable>
+                    </ThemedView>
+                  ))
+                ))}
+
+              <Link href="/decks/import" asChild>
+                <Pressable style={styles.actionBtn}>
+                  <ThemedText>Import deck (JSON or CSV)</ThemedText>
                 </Pressable>
-                {child && (
-                  <Switch value={assigned} onValueChange={() => toggleAssign(deck, assigned)} />
-                )}
-              </ThemedView>
-            ))}
+              </Link>
+              <Link href="/decks/new" asChild>
+                <Pressable style={[styles.actionBtn, styles.actionPrimary]}>
+                  <ThemedText style={styles.actionPrimaryText}>Create new deck</ThemedText>
+                </Pressable>
+              </Link>
+            </View>
           </ScrollView>
         )}
       </SafeAreaView>
@@ -155,8 +212,6 @@ export default function DecksScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safe: { flex: 1, padding: Spacing.four, gap: Spacing.three },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
-  headerActions: { flexDirection: 'row', gap: Spacing.three, alignItems: 'center' },
   search: {
     fontSize: 16,
     paddingVertical: Spacing.two,
@@ -173,4 +228,26 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   rowMain: { flex: 1, gap: Spacing.one },
+  removeBtn: { paddingVertical: Spacing.one, paddingHorizontal: Spacing.two },
+  removeConfirmText: { color: '#d2433f', fontWeight: '600' },
+  addSection: { gap: Spacing.two, marginTop: Spacing.two },
+  actionBtn: {
+    padding: Spacing.three,
+    borderRadius: Spacing.two,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#888',
+  },
+  actionPrimary: { backgroundColor: '#3c87f7', borderColor: '#3c87f7' },
+  actionPrimaryText: { color: '#ffffff', fontWeight: '600' },
+  addHint: { paddingHorizontal: Spacing.one },
+  enableBtn: {
+    paddingVertical: Spacing.one,
+    paddingHorizontal: Spacing.three,
+    borderRadius: 999,
+    backgroundColor: '#3c87f720',
+    borderWidth: 1,
+    borderColor: '#3c87f7',
+  },
+  enableBtnText: { color: '#3c87f7', fontWeight: '600' },
 });
