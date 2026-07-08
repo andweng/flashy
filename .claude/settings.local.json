@@ -32,7 +32,9 @@
       "Bash(echo \"  /zzz-nonsense-xyz -> $\\(curl -sS -o /dev/null -w '%{http_code}' 'https://flashy.pages.dev/zzz-nonsense-xyz'\\)\")",
       "Bash(curl -sS 'https://flashy.pages.dev/')",
       "Bash(echo \"  _expo refs: $\\(curl -sS 'https://flashy.pages.dev/')",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "WebFetch(domain:docs.expo.dev)",
+      "Bash(npx expo *)"
     ]
   }
 }

@@ -42,15 +42,6 @@ export function addDays(date: string, days: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-// Due date for a card freshly placed into a bucket. Bucket A (index 0) is due
-// immediately so brand-new cards enter today's rotation right away; any higher
-// bucket waits one full interval, so a card dropped straight into E isn't due
-// until its first E review comes around (rather than showing up today).
-export function initialDueDate(today: string, bucketIndex: number, intervals: number[]): string {
-  if (bucketIndex <= 0) return today;
-  return addDays(today, intervals[bucketIndex] ?? 1);
-}
-
 // Current cycle day for a child given their stored cycle-start date (null ⇒ day 0,
 // i.e. a fresh start). Clamped to ≥ 0 so a future-dated start can't go negative.
 export function cycleDayOf(cycleStart: string | null, realToday: string): number {
@@ -58,11 +49,10 @@ export function cycleDayOf(cycleStart: string | null, realToday: string): number
   return Math.max(0, daysBetween(cycleStart, realToday));
 }
 
-// `next_due_on` for a bucket-`bucketIndex` card when the child sits on cycle day
-// `cycleDay`, with NO accumulated backlog: the soonest day ≥ today on which the
-// idealized fresh-start cycle would test that bucket. Day 0 mirrors initialDueDate
-// (bucket A due today; higher buckets one interval out). Never returns a past date,
-// so owedReviews yields exactly 1 for a card due today.
+// The soonest day ≥ today on which the idealized fresh-start cycle would test a
+// bucket-`bucketIndex` card sitting on cycle day `cycleDay` (bucket A due today;
+// higher buckets one interval out on day 0). Used only by the deck schedule preview
+// (dueGroupsForDeckOnDay); the live scheduler derives due-ness from last_tested_on.
 export function dueDateForCycleDay(
   today: string,
   cycleDay: number,
@@ -104,19 +94,58 @@ export function dueGroupsForDeckOnDay(
     .map(([bucket, v]) => ({ bucket, due: v.due, notDue: v.notDue }));
 }
 
-// True iff the card is due on `today` (due today or overdue) and not graduated.
-// Mirrors the review-queue filter (graduated_at is null AND next_due_on <= today).
-export function isDueOn(state: CardState, today: string): boolean {
-  return !state.graduated_at && state.next_due_on <= today;
+// ─── last_tested_on scheduling model ─────────────────────────────────────────
+// The redesigned scheduler. "Due today" is a pure function of the card's bucket,
+// when it was last tested, and the child's cycle day for the deck (derived from
+// the user-set start date) — no stored next_due_on and no owedReviews stacking.
+//
+// Buckets test on a shared grid: bucket b is scheduled on the cycle days that are
+// multiples of its interval (0, iv, 2·iv, …). The start date sets the grid's phase.
+// A card stays due until it is actually tested, so missed/skipped days roll over
+// for free (as a single due, never a stacked backlog). A test snaps last_tested_on
+// to today, re-aligning the card onto its (possibly new) bucket's grid.
+
+// Date of the most recent scheduled slot for `bucketIndex`, on or before `today`,
+// given the child's `cycleDay`. Bucket A (interval 1) ⇒ always today; a higher
+// bucket ⇒ today minus how far we are past its last multiple-of-interval slot.
+export function mostRecentSlot(
+  today: string,
+  cycleDay: number,
+  bucketIndex: number,
+  intervals: number[],
+): string {
+  const interval = intervals[bucketIndex] ?? 1;
+  const phase = ((cycleDay % interval) + interval) % interval; // days since last slot
+  return addDays(today, -phase);
 }
 
-// How many reviews a card owes by `today`. 0 if not due, ≥1 if due (incl. backlog).
-export function owedReviews(state: CardState, deck: Deck, today: string): number {
-  if (state.graduated_at) return 0;
-  const overdue = daysBetween(state.next_due_on, today);
-  if (overdue < 0) return 0;
-  const interval = deck.bucket_intervals_days[state.bucket_index] ?? 1;
-  return Math.floor(overdue / interval) + 1;
+type DueInputs = {
+  bucket_index: number;
+  last_tested_on?: string | null;
+  graduated_at: string | null;
+};
+
+// True iff a non-graduated card is due on `today`. A null/absent last_tested_on
+// means "force due now" (a fresh bucket-0 card, or a card cleared by a reset), so
+// it always shows. Otherwise: due iff it has not been tested since its most recent
+// scheduled slot — which keeps it due every day until tested (rollover), including
+// across skipped days.
+export function isDueToday(
+  state: DueInputs,
+  intervals: number[],
+  cycleDay: number,
+  today: string,
+): boolean {
+  if (state.graduated_at) return false;
+  if (state.last_tested_on == null) return true;
+  return state.last_tested_on < mostRecentSlot(today, cycleDay, state.bucket_index, intervals);
+}
+
+// last_tested_on for a freshly-created card_state. Bucket 0 (interval 1) enters
+// today's rotation immediately (null ⇒ due). A higher bucket is marked "tested as
+// of today" so it waits for its first real grid slot rather than showing today.
+export function initialLastTested(today: string, bucketIndex: number): string | null {
+  return bucketIndex <= 0 ? null : today;
 }
 
 export type ReviewAction = { kind: 'pass' } | { kind: 'fail' };
@@ -126,17 +155,17 @@ export type StateUpdate = {
   graduated: boolean;
 };
 
-// Apply a single owed-review action. Caller knows if this is the final owed review.
-// - fail: drop to bucket 0, reset due date, reset top-bucket pass counter.
-// - pass (catch-up): stay in bucket, advance next_due_on by one interval.
-// - pass (final): promote bucket (or stay at top); maybe graduate.
+// Apply a single review outcome under the last_tested_on model. There is no
+// catch-up/backlog: a due card is graded exactly once. Both outcomes stamp
+// last_tested_on = today, snapping the card onto its resulting bucket's grid.
+// - fail: drop to bucket 0, reset top-bucket pass counter.
+// - pass: promote one bucket (or stay at top); maybe graduate.
 export function applyReview(
   state: CardState,
   deck: Deck,
   child: Child,
   today: string,
   action: ReviewAction,
-  isLastOwed: boolean,
 ): StateUpdate {
   const nowIso = new Date().toISOString();
 
@@ -145,20 +174,8 @@ export function applyReview(
       next_state: {
         ...state,
         bucket_index: 0,
-        next_due_on: addDays(today, deck.bucket_intervals_days[0] ?? 1),
+        last_tested_on: today,
         consecutive_passes_in_top_bucket: 0,
-        last_reviewed_at: nowIso,
-      },
-      graduated: false,
-    };
-  }
-
-  if (!isLastOwed) {
-    const interval = deck.bucket_intervals_days[state.bucket_index] ?? 1;
-    return {
-      next_state: {
-        ...state,
-        next_due_on: addDays(state.next_due_on, interval),
         last_reviewed_at: nowIso,
       },
       graduated: false,
@@ -168,8 +185,7 @@ export function applyReview(
   const lastIndex = deck.bucket_intervals_days.length - 1;
   const atTop = state.bucket_index >= lastIndex;
   const nextBucket = atTop ? state.bucket_index : state.bucket_index + 1;
-  const interval = deck.bucket_intervals_days[nextBucket] ?? 1;
-  let nextPasses = atTop ? state.consecutive_passes_in_top_bucket + 1 : 0;
+  const nextPasses = atTop ? state.consecutive_passes_in_top_bucket + 1 : 0;
   let graduatedAt: string | null = state.graduated_at;
   if (atTop && child.graduate_after_passes && nextPasses >= child.graduate_after_passes) {
     graduatedAt = nowIso;
@@ -179,7 +195,7 @@ export function applyReview(
     next_state: {
       ...state,
       bucket_index: nextBucket,
-      next_due_on: addDays(today, interval),
+      last_tested_on: today,
       consecutive_passes_in_top_bucket: nextPasses,
       graduated_at: graduatedAt,
       last_reviewed_at: nowIso,

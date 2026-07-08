@@ -44,9 +44,9 @@ export interface DB {
   resetTodaysReviewsForChild(childId: string, today: string, timezone: string): Promise<number>;
 
   getDeckAssignment(deckId: string, childId: string): Promise<DeckAssignment | null>;
-  // Reposition (child, deck) onto cycle day `cycleDay`: persist
-  // deck_assignments.cycle_start_date (= realToday − cycleDay, or null for day 0)
-  // and rewrite next_due_on for that child's non-graduated cards IN THIS DECK via
-  // dueDateForCycleDay. Returns the updated assignment. `realToday` is the real day.
+  // Reposition (child, deck) onto cycle day `cycleDay` by persisting
+  // deck_assignments.cycle_start_date (= realToday − cycleDay, or null for day 0).
+  // Under the last_tested_on model this is anchor-only — due-ness is derived, so no
+  // card rows are rewritten. Returns the updated assignment. `realToday` is today.
   applyCycleDay(childId: string, deckId: string, cycleDay: number, realToday: string): Promise<DeckAssignment>;
 }

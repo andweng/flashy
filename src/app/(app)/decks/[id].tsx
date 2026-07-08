@@ -11,7 +11,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { serializeDeck } from '@/lib/deck-export';
-import { bucketLetter, cycleDayOf, dueDateForCycleDay, dueGroupsForDeckOnDay, isDueOn } from '@/lib/leitner';
+import { bucketLetter, cycleDayOf, dueGroupsForDeckOnDay, initialLastTested, isDueToday } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
 
@@ -125,15 +125,13 @@ export default function DeckDetailScreen() {
         // Match the timezone every due-ness reader uses (review/home/queue),
         // so an "add due today" card actually lands in today's queue.
         const realToday = getEffectiveToday(scheduleTz);
-        const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
-        const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
         await db.upsertCardState({
           child_id: currentChild.id,
           card_id: created.id,
           bucket_index: addBucket,
-          next_due_on: addDueToday
-            ? realToday
-            : dueDateForCycleDay(realToday, cycleDay, addBucket, deck.bucket_intervals_days),
+          // "Due today" forces due now (null); otherwise the card enters on its
+          // natural schedule (bucket 0 due now, higher buckets at their next slot).
+          last_tested_on: addDueToday ? null : initialLastTested(realToday, addBucket),
           consecutive_passes_in_top_bucket: 0,
           graduated_at: null,
           last_reviewed_at: null,
@@ -218,13 +216,12 @@ export default function DeckDetailScreen() {
     if (!currentChild || !deck) return;
     const existing = cardStates.get(cardId);
     const realToday = getEffectiveToday('UTC');
-    const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
-    const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
     const newState: CardState = {
       child_id: currentChild.id,
       card_id: cardId,
       bucket_index: bucketIndex,
-      next_due_on: dueDateForCycleDay(realToday, cycleDay, bucketIndex, deck.bucket_intervals_days),
+      // Re-bucketing puts the card on its natural schedule for the new bucket.
+      last_tested_on: initialLastTested(realToday, bucketIndex),
       consecutive_passes_in_top_bucket: 0,
       graduated_at: null,
       last_reviewed_at: existing?.last_reviewed_at ?? null,
@@ -245,10 +242,10 @@ export default function DeckDetailScreen() {
     const realToday = getEffectiveToday(scheduleTz);
     const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
     const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
-    const next_due_on = isDueOn(existing, realToday)
-      ? dueDateForCycleDay(realToday, cycleDay, existing.bucket_index, deck.bucket_intervals_days)
-      : realToday;
-    const newState: CardState = { ...existing, next_due_on };
+    // Toggle: if it's currently due, mark it tested today (drops off today's
+    // queue); if not, force it due now (null).
+    const currentlyDue = isDueToday(existing, deck.bucket_intervals_days, cycleDay, realToday);
+    const newState: CardState = { ...existing, last_tested_on: currentlyDue ? realToday : null };
     await db.upsertCardState(newState);
     setCardStates((m) => {
       const next = new Map(m);
@@ -502,7 +499,7 @@ export default function DeckDetailScreen() {
                 <>
                   <ThemedText themeColor="textSecondary" type="small">
                     What day of this deck&apos;s cycle is {currentChild.display_name} on? Applying
-                    rewrites this deck&apos;s due dates so the right groups come due — no backlog.
+                    sets this deck&apos;s start date so the right groups come due — no backlog.
                   </ThemedText>
                   <View style={styles.dayInputRow}>
                     <ThemedText>Day</ThemedText>
@@ -736,7 +733,12 @@ export default function DeckDetailScreen() {
                           onPress={() => toggleDue(card.id)}
                           style={[
                             styles.dueChip,
-                            isDueOn(cardStates.get(card.id)!, realToday) && styles.dueChipActive,
+                            isDueToday(
+                              cardStates.get(card.id)!,
+                              deck.bucket_intervals_days,
+                              appliedDay,
+                              realToday,
+                            ) && styles.dueChipActive,
                           ]}>
                           <ThemedText type="small">Due today</ThemedText>
                         </Pressable>

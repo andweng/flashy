@@ -49,7 +49,10 @@ export type CardState = {
   child_id: string;
   card_id: string;
   bucket_index: number;
-  next_due_on: string;
+  // Scheduling anchor (see leitner.ts "last_tested_on model"). Due-ness is derived
+  // from this + bucket + the deck's cycle start; there is no stored due date.
+  // null ⇒ "force due now" (a fresh bucket-0 card, or a card cleared by a reset).
+  last_tested_on: string | null;
   consecutive_passes_in_top_bucket: number;
   graduated_at: string | null;
   last_reviewed_at: string | null;

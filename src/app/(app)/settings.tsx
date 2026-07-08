@@ -138,15 +138,15 @@ export default function SettingsScreen() {
           child_id: item.child_id,
           card_id: item.card_id,
           bucket_index: item.bucket_index,
-          next_due_on: item.next_due_on,
+          last_tested_on: item.last_tested_on,
           consecutive_passes_in_top_bucket: item.consecutive_passes_in_top_bucket,
           graduated_at: item.graduated_at,
           last_reviewed_at: item.last_reviewed_at,
         };
-        // Treat each due card as one passed review: promote its bucket and push
-        // its due date past today. Recording the review lets "Reset today's
-        // cards" undo this just like a normal review session.
-        const update = applyReview(state, item.deck, child, today, { kind: 'pass' }, true);
+        // Treat each due card as one passed review: promote its bucket and stamp
+        // it tested today. Recording the review lets "Reset today's cards" undo
+        // this just like a normal review session.
+        const update = applyReview(state, item.deck, child, today, { kind: 'pass' });
         await db.upsertCardState(update.next_state);
         await db.recordReview({
           child_id: child.id,

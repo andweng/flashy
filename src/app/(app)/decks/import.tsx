@@ -11,7 +11,7 @@ import { parseCSVImport } from '@/lib/csv-import';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { parseDeckExport } from '@/lib/deck-export';
-import { cycleDayOf, DEFAULT_BUCKET_INTERVALS, dueDateForCycleDay } from '@/lib/leitner';
+import { DEFAULT_BUCKET_INTERVALS, initialLastTested } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { GradingMode } from '@/types/domain';
 
@@ -94,15 +94,14 @@ export default function ImportDeckScreen() {
       if (hasBuckets && child) {
         await db.assignDeckToChild(deck.id, child.id);
         const realToday = getEffectiveToday('UTC');
-        const assignment = await db.getDeckAssignment(deck.id, child.id);
-        const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
         for (const c of created) {
           if (c.bucket === undefined) continue;
           await db.upsertCardState({
             child_id: child.id,
             card_id: c.id,
             bucket_index: c.bucket,
-            next_due_on: dueDateForCycleDay(realToday, cycleDay, c.bucket, deck.bucket_intervals_days),
+            // Imported cards enter on their natural schedule for their bucket.
+            last_tested_on: initialLastTested(realToday, c.bucket),
             consecutive_passes_in_top_bucket: 0,
             graduated_at: null,
             last_reviewed_at: null,

@@ -8,7 +8,6 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
-import { owedReviews } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 
 type DeckSummary = { id: string; name: string; due: number };
@@ -25,12 +24,13 @@ export default function HomeScreen() {
       const today = getEffectiveToday(parent?.timezone ?? 'UTC');
       const due = await db.listDueCardStatesForChild(child.id, today);
 
+      // listDueCardStatesForChild returns one row per due card (no backlog
+      // stacking), so each contributes exactly one to its deck's count.
       const byDeck = new Map<string, DeckSummary>();
       for (const s of due) {
-        const owed = owedReviews(s, s.deck, today);
         const existing = byDeck.get(s.deck.id);
-        if (existing) existing.due += owed;
-        else byDeck.set(s.deck.id, { id: s.deck.id, name: s.deck.name, due: owed });
+        if (existing) existing.due += 1;
+        else byDeck.set(s.deck.id, { id: s.deck.id, name: s.deck.name, due: 1 });
       }
       const list = [...byDeck.values()].sort((a, b) => b.due - a.due);
       setPerDeck(list);

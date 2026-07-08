@@ -17,12 +17,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
-import {
-  applyReview,
-  bucketLetter,
-  checkTypedAnswer,
-  owedReviews,
-} from '@/lib/leitner';
+import { applyReview, bucketLetter, checkTypedAnswer } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Deck } from '@/types/domain';
 
@@ -30,11 +25,30 @@ type QueueItem = {
   state: CardState;
   card: Card;
   deck: Deck;
-  owedAtStart: number;
-  position: number;
 };
 
 type TypedResult = 'correct' | 'wrong' | null;
+
+// Play cards bucket by bucket (A→B→C…), shuffling only within each bucket so the
+// order varies day to day without ever mixing buckets together.
+function orderWithinBuckets(items: QueueItem[]): QueueItem[] {
+  const byBucket = new Map<number, QueueItem[]>();
+  for (const it of items) {
+    const group = byBucket.get(it.state.bucket_index);
+    if (group) group.push(it);
+    else byBucket.set(it.state.bucket_index, [it]);
+  }
+  const out: QueueItem[] = [];
+  for (const bucket of [...byBucket.keys()].sort((a, b) => a - b)) {
+    const group = byBucket.get(bucket)!;
+    for (let i = group.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [group[i], group[j]] = [group[j], group[i]];
+    }
+    out.push(...group);
+  }
+  return out;
+}
 
 export default function ReviewScreen() {
   const { child } = useCurrentChild();
@@ -58,32 +72,15 @@ export default function ReviewScreen() {
       setToday(_today);
 
       const due = await db.listDueCardStatesForChild(child.id, _today);
-
-      const queue: QueueItem[] = [];
-      for (const s of due) {
-        const owed = owedReviews(s, s.deck, _today);
-        // Strip the joined card/deck objects so `state` is a pure CardState.
-        // Otherwise they ride along through applyReview's spread into the
-        // card_states upsert as non-existent columns, which Supabase rejects —
-        // silently aborting recordAndAdvance so grading taps did nothing.
+      // One item per due card — no backlog stacking. Strip the joined card/deck so
+      // `state` is a pure CardState; otherwise those objects ride along through
+      // applyReview's spread into the card_states upsert as non-existent columns,
+      // which Supabase rejects — silently aborting recordAndAdvance.
+      const queue: QueueItem[] = due.map((s) => {
         const { card, deck, ...state } = s;
-        for (let i = 0; i < owed; i++) {
-          queue.push({
-            state,
-            card,
-            deck,
-            owedAtStart: owed,
-            position: i,
-          });
-        }
-      }
-      // Randomize order so cards due today aren't always played in the same
-      // bucket/deck/alphabetical sequence. Fisher-Yates in place.
-      for (let i = queue.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [queue[i], queue[j]] = [queue[j], queue[i]];
-      }
-      setItems(queue);
+        return { state, card, deck };
+      });
+      setItems(orderWithinBuckets(queue));
     })();
   }, [child]);
 
@@ -109,8 +106,7 @@ export default function ReviewScreen() {
   ) {
     if (!child || !items) return;
     const item = items[index];
-    const isLastOwed = item.position === item.owedAtStart - 1;
-    const update = applyReview(item.state, item.deck, child, today, { kind: outcome }, isLastOwed);
+    const update = applyReview(item.state, item.deck, child, today, { kind: outcome });
 
     await db.upsertCardState(update.next_state);
     await db.recordReview({
@@ -125,14 +121,7 @@ export default function ReviewScreen() {
     if (outcome === 'pass') setPasses((p) => p + 1);
     else setFails((f) => f + 1);
 
-    // On fail, skip remaining owed reviews for the same card.
-    let nextIndex = index + 1;
-    if (outcome === 'fail') {
-      while (nextIndex < items.length && items[nextIndex].card.id === item.card.id) {
-        nextIndex++;
-      }
-    }
-    setIndex(nextIndex);
+    setIndex(index + 1);
     setRevealed(false);
     setTypedInput('');
     setTypedResult(null);
@@ -166,8 +155,6 @@ export default function ReviewScreen() {
 
         <ThemedText themeColor="textSecondary" type="small" style={styles.meta}>
           {current.deck.name} · Bucket {bucketLetter(current.state.bucket_index)}
-          {current.owedAtStart > 1 &&
-            ` · catch-up ${current.position + 1}/${current.owedAtStart}`}
         </ThemedText>
 
         <ThemedView type="backgroundElement" style={styles.cardArea}>

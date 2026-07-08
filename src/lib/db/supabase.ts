@@ -3,8 +3,7 @@
 // where the API takes it as input.
 
 import { supabase } from '@/lib/supabase';
-import { addDays, dueDateForCycleDay, todayInTz } from '@/lib/leitner';
-import { getEffectiveToday } from '@/lib/today';
+import { addDays, cycleDayOf, isDueToday, todayInTz } from '@/lib/leitner';
 import type { Card, CardState, Child, Deck, DeckAssignment, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
@@ -13,7 +12,7 @@ const CHILD_COLS = 'id, parent_id, display_name, avatar, graduate_after_passes';
 const DECK_COLS = 'id, parent_id, name, description, bucket_intervals_days';
 const CARD_COLS = 'id, deck_id, front, back, grading_mode, typed_alternates, choices';
 const CARD_STATE_COLS =
-  'child_id, card_id, bucket_index, next_due_on, consecutive_passes_in_top_bucket, graduated_at, last_reviewed_at';
+  'child_id, card_id, bucket_index, last_tested_on, consecutive_passes_in_top_bucket, graduated_at, last_reviewed_at';
 const REVIEW_COLS =
   'id, child_id, card_id, reviewed_at, outcome, bucket_before, bucket_after, user_input';
 
@@ -92,38 +91,9 @@ export const supabaseDB: DB = {
     return (data as DeckAssignment | null) ?? null;
   },
   async applyCycleDay(childId, deckId, cycleDay, realToday): Promise<DeckAssignment> {
+    // Repositioning is now just moving the anchor: due-ness is derived from
+    // last_tested_on + this start date, so no card_states need rewriting.
     const cycle_start_date = cycleDay <= 0 ? null : addDays(realToday, -cycleDay);
-
-    // This child's non-graduated states, joined to each card's deck id + intervals.
-    const { data: rows, error: sErr } = await supabase
-      .from('card_states')
-      .select('child_id, card_id, bucket_index, card:cards!inner(deck_id, deck:decks!inner(bucket_intervals_days))')
-      .eq('child_id', childId)
-      .is('graduated_at', null);
-    if (sErr) throw sErr;
-
-    type Row = {
-      child_id: string;
-      card_id: string;
-      bucket_index: number;
-      card: { deck_id: string; deck: { bucket_intervals_days: number[] } };
-    };
-    // Rewrite next_due_on FIRST, only for cards in THIS deck. Partial failure leaves
-    // the pair on its old day with consistent dates; the op is idempotent on retry.
-    for (const r of (rows as unknown as Row[]) ?? []) {
-      if (r.card.deck_id !== deckId) continue;
-      const next_due_on = dueDateForCycleDay(
-        realToday, cycleDay, r.bucket_index, r.card.deck.bucket_intervals_days,
-      );
-      const { error: uErr } = await supabase
-        .from('card_states')
-        .update({ next_due_on })
-        .eq('child_id', r.child_id)
-        .eq('card_id', r.card_id);
-      if (uErr) throw uErr;
-    }
-
-    // Set the per-(child, deck) anchor LAST and return it.
     const { data: aRow, error: aErr } = await supabase
       .from('deck_assignments')
       .update({ cycle_start_date })
@@ -228,12 +198,11 @@ export const supabaseDB: DB = {
     if (e2) throw e2;
     const childIds = ((assignments ?? []) as { child_id: string }[]).map((a) => a.child_id);
     if (childIds.length) {
-      const today = getEffectiveToday();
       const rows = childIds.map((childId) => ({
         child_id: childId,
         card_id: (card as { id: string }).id,
         bucket_index: 0,
-        next_due_on: today,
+        last_tested_on: null,
         consecutive_passes_in_top_bucket: 0,
         graduated_at: null,
         last_reviewed_at: null,
@@ -281,12 +250,11 @@ export const supabaseDB: DB = {
     if (e2) throw e2;
     const cardIds = ((cardRows ?? []) as { id: string }[]).map((c) => c.id);
     if (cardIds.length) {
-      const today = getEffectiveToday();
       const rows = cardIds.map((cardId) => ({
         child_id: childId,
         card_id: cardId,
         bucket_index: 0,
-        next_due_on: today,
+        last_tested_on: null,
         consecutive_passes_in_top_bucket: 0,
         graduated_at: null,
         last_reviewed_at: null,
@@ -310,14 +278,18 @@ export const supabaseDB: DB = {
     // Restrict to decks currently assigned to this child. card_states persist
     // after a deck is unassigned (to preserve progress) and can also be created
     // for unassigned decks via the deck editor, so gating only on child_id would
-    // leak cross-deck cards into review.
+    // leak cross-deck cards into review. Due-ness is derived per deck from
+    // last_tested_on + the deck's cycle start (isDueToday), so we pull the child's
+    // live cards and filter in app rather than with an indexed date comparison.
     const { data: assignRows, error: assignErr } = await supabase
       .from('deck_assignments')
-      .select('deck_id')
+      .select('deck_id, cycle_start_date')
       .eq('child_id', childId);
     if (assignErr) throw assignErr;
-    const assignedDeckIds = new Set((assignRows ?? []).map((r) => r.deck_id));
-    if (assignedDeckIds.size === 0) return [];
+    const startByDeck = new Map<string, string | null>(
+      (assignRows ?? []).map((r) => [r.deck_id, (r.cycle_start_date as string | null) ?? null]),
+    );
+    if (startByDeck.size === 0) return [];
 
     const { data, error } = await supabase
       .from('card_states')
@@ -329,8 +301,7 @@ export const supabaseDB: DB = {
         )
       `)
       .eq('child_id', childId)
-      .is('graduated_at', null)
-      .lte('next_due_on', today);
+      .is('graduated_at', null);
     if (error) throw error;
 
     type Row = CardState & { card: Card & { deck: Deck } };
@@ -340,7 +311,11 @@ export const supabaseDB: DB = {
         const { deck, ...cardFields } = card;
         return { ...stateFields, card: cardFields, deck };
       })
-      .filter((row) => assignedDeckIds.has(row.deck.id));
+      .filter((row) => {
+        if (!startByDeck.has(row.deck.id)) return false;
+        const cycleDay = cycleDayOf(startByDeck.get(row.deck.id) ?? null, today);
+        return isDueToday(row, row.deck.bucket_intervals_days, cycleDay, today);
+      });
   },
 
   async listCardStatesForChild(childId): Promise<CardState[]> {
@@ -408,7 +383,7 @@ export const supabaseDB: DB = {
         .from('card_states')
         .update({
           bucket_index: bucket,
-          next_due_on: today,
+          last_tested_on: null, // force due again for the rest of today
           consecutive_passes_in_top_bucket: 0,
           graduated_at: null,
           last_reviewed_at: null,

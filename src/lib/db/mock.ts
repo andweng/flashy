@@ -1,8 +1,7 @@
 // In-memory mock DB used while building UI. Reads/writes a fixture set.
 // Swap to a Supabase-backed impl in lib/db/index.ts when ready.
 
-import { addDays, dueDateForCycleDay, todayInTz } from '@/lib/leitner';
-import { getEffectiveToday } from '@/lib/today';
+import { addDays, cycleDayOf, isDueToday, todayInTz } from '@/lib/leitner';
 import type { Card, CardState, Child, Deck, DeckAssignment, GradingMode, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
@@ -70,14 +69,16 @@ const cards: Card[] = [
   makeCard('d3', 'Kenya', 'Nairobi'),
 ];
 
-// Spread states across buckets and due dates to make the home screen look real.
-const PATTERNS: { bucket: number; daysOffset: number }[] = [
-  { bucket: 0, daysOffset: 0 },
-  { bucket: 0, daysOffset: -1 },
-  { bucket: 1, daysOffset: 0 },
-  { bucket: 2, daysOffset: -3 },
-  { bucket: 1, daysOffset: 2 },
-  { bucket: 3, daysOffset: 0 },
+// Spread states across buckets and last-tested dates to make the home screen look
+// real. At cycle day 0 (fresh start) a card is due iff last_tested is null or before
+// today, so this mixes due (null / past) and not-due (today) cards.
+const PATTERNS: { bucket: number; lastTested: string | null }[] = [
+  { bucket: 0, lastTested: null }, // fresh → due
+  { bucket: 0, lastTested: TODAY }, // done today → not due
+  { bucket: 1, lastTested: addDays(TODAY, -2) }, // due
+  { bucket: 2, lastTested: addDays(TODAY, -5) }, // due
+  { bucket: 1, lastTested: TODAY }, // not due
+  { bucket: 3, lastTested: null }, // fresh higher bucket → due
 ];
 
 const states: CardState[] = (() => {
@@ -90,7 +91,7 @@ const states: CardState[] = (() => {
         child_id: a.child_id,
         card_id: card.id,
         bucket_index: p.bucket,
-        next_due_on: addDays(TODAY, p.daysOffset),
+        last_tested_on: p.lastTested,
         consecutive_passes_in_top_bucket: 0,
         graduated_at: null,
         last_reviewed_at: null,
@@ -139,19 +140,9 @@ export const mockDB: DB = {
   async applyCycleDay(childId, deckId, cycleDay, realToday): Promise<DeckAssignment> {
     const a = assignments.find((x) => x.deck_id === deckId && x.child_id === childId);
     if (!a) throw new Error('Deck not assigned to child');
+    // Repositioning is now just moving the anchor: due-ness is derived from
+    // last_tested_on + this start date, so no card rows need rewriting.
     const cycle_start_date = cycleDay <= 0 ? null : addDays(realToday, -cycleDay);
-    // Reschedule this child's non-graduated cards IN THIS DECK only. Rewrite the
-    // card dates first; set the anchor last (write-order safe + idempotent).
-    const deck = decks.find((d) => d.id === deckId);
-    const deckCardIds = new Set(cards.filter((c) => c.deck_id === deckId).map((c) => c.id));
-    if (deck) {
-      for (const s of states) {
-        if (s.child_id !== childId || s.graduated_at || !deckCardIds.has(s.card_id)) continue;
-        s.next_due_on = dueDateForCycleDay(
-          realToday, cycleDay, s.bucket_index, deck.bucket_intervals_days,
-        );
-      }
-    }
     a.cycle_start_date = cycle_start_date;
     return { deck_id: deckId, child_id: childId, cycle_start_date };
   },
@@ -217,14 +208,14 @@ export const mockDB: DB = {
       ...input,
     };
     cards.push(card);
-    // Fan out card_states to children already assigned to this deck.
-    const today = getEffectiveToday();
+    // Fan out card_states to children already assigned to this deck. New bucket-0
+    // cards start with last_tested_on = null, so they enter today's rotation.
     for (const a of assignments.filter((a) => a.deck_id === input.deck_id)) {
       states.push({
         child_id: a.child_id,
         card_id: card.id,
         bucket_index: 0,
-        next_due_on: today,
+        last_tested_on: null,
         consecutive_passes_in_top_bucket: 0,
         graduated_at: null,
         last_reviewed_at: null,
@@ -252,8 +243,7 @@ export const mockDB: DB = {
   async assignDeckToChild(deckId, childId) {
     if (assignments.some((a) => a.deck_id === deckId && a.child_id === childId)) return;
     assignments.push({ deck_id: deckId, child_id: childId });
-    // Fan out card_states for existing cards in this deck.
-    const today = getEffectiveToday();
+    // Fan out card_states for existing cards in this deck (bucket 0, due now).
     const deckCards = cards.filter((c) => c.deck_id === deckId);
     for (const card of deckCards) {
       const exists = states.some((s) => s.child_id === childId && s.card_id === card.id);
@@ -262,7 +252,7 @@ export const mockDB: DB = {
           child_id: childId,
           card_id: card.id,
           bucket_index: 0,
-          next_due_on: today,
+          last_tested_on: null,
           consecutive_passes_in_top_bucket: 0,
           graduated_at: null,
           last_reviewed_at: null,
@@ -279,31 +269,31 @@ export const mockDB: DB = {
     // Only play decks currently in this child's rotation. card_states linger
     // after a deck is unassigned (to preserve progress) and can also be created
     // for unassigned decks via the deck editor, so gating purely on child_id
-    // would leak cross-deck cards into review.
-    const assignedDeckIds = new Set(
-      assignments.filter((a) => a.child_id === childId).map((a) => a.deck_id),
+    // would leak cross-deck cards into review. Due-ness is derived per deck from
+    // last_tested_on + the deck's cycle start (isDueToday).
+    const startByDeck = new Map<string, string | null>(
+      assignments
+        .filter((a) => a.child_id === childId)
+        .map((a) => [a.deck_id, a.cycle_start_date ?? null]),
     );
     return states
-      .filter((s) => s.child_id === childId && s.next_due_on <= today && !s.graduated_at)
+      .filter((s) => s.child_id === childId && !s.graduated_at)
       .map((s) => {
         const card = cards.find((c) => c.id === s.card_id)!;
         const deck = decks.find((d) => d.id === card.deck_id)!;
         return { ...s, card, deck };
       })
-      .filter((row) => assignedDeckIds.has(row.deck.id));
+      .filter((row) => {
+        if (!startByDeck.has(row.deck.id)) return false;
+        const cycleDay = cycleDayOf(startByDeck.get(row.deck.id) ?? null, today);
+        return isDueToday(row, row.deck.bucket_intervals_days, cycleDay, today);
+      });
   },
   async listCardStatesForChild(childId) {
     return states.filter((s) => s.child_id === childId);
   },
   async countDueCardsForChild(childId, today) {
-    const assignedDeckIds = new Set(
-      assignments.filter((a) => a.child_id === childId).map((a) => a.deck_id),
-    );
-    return states.filter((s) => {
-      if (s.child_id !== childId || s.next_due_on > today || s.graduated_at) return false;
-      const card = cards.find((c) => c.id === s.card_id);
-      return card ? assignedDeckIds.has(card.deck_id) : false;
-    }).length;
+    return (await mockDB.listDueCardStatesForChild(childId, today)).length;
   },
   async upsertCardState(s) {
     const idx = states.findIndex((x) => x.child_id === s.child_id && x.card_id === s.card_id);
@@ -341,7 +331,7 @@ export const mockDB: DB = {
         states[idx] = {
           ...states[idx],
           bucket_index: bucket,
-          next_due_on: today,
+          last_tested_on: null, // force due again for the rest of today
           consecutive_passes_in_top_bucket: 0,
           graduated_at: null,
           last_reviewed_at: null,
