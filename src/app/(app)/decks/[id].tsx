@@ -11,7 +11,14 @@ import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
 import { serializeDeck } from '@/lib/deck-export';
-import { bucketLetter, cycleDayOf, dueGroupsForDeckOnDay, initialLastTested, isDueToday } from '@/lib/leitner';
+import {
+  bucketLetter,
+  cycleDayOf,
+  dueGroupsForDeckOnDay,
+  initialLastTested,
+  isDueToday,
+  parseIntervalsList,
+} from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
 
@@ -53,10 +60,13 @@ export default function DeckDetailScreen() {
   const [addDueToday, setAddDueToday] = useState(false);
   const [addPending, setAddPending] = useState(false);
 
-  // Inline deck editing (name + description)
+  // Inline deck editing (name + description + per-bucket intervals). Intervals are
+  // held as strings while editing so fields can be blank mid-typing.
   const [editingDeck, setEditingDeck] = useState(false);
   const [editDeckName, setEditDeckName] = useState('');
   const [editDeckDescription, setEditDeckDescription] = useState('');
+  const [editDeckIntervals, setEditDeckIntervals] = useState<string[]>([]);
+  const [editDeckError, setEditDeckError] = useState<string | null>(null);
   const [editDeckPending, setEditDeckPending] = useState(false);
 
   // Inline card editing
@@ -188,6 +198,8 @@ export default function DeckDetailScreen() {
     if (!deck) return;
     setEditDeckName(deck.name);
     setEditDeckDescription(deck.description ?? '');
+    setEditDeckIntervals(deck.bucket_intervals_days.map(String));
+    setEditDeckError(null);
     setEditingDeck(true);
   }
 
@@ -195,15 +207,37 @@ export default function DeckDetailScreen() {
     setEditingDeck(false);
   }
 
+  function setIntervalAt(i: number, value: string) {
+    setEditDeckIntervals((prev) => prev.map((v, j) => (j === i ? value : v)));
+  }
+  function addIntervalBucket() {
+    setEditDeckIntervals((prev) => (prev.length >= 10 ? prev : [...prev, '']));
+  }
+  function removeIntervalBucket(i: number) {
+    setEditDeckIntervals((prev) => (prev.length <= 2 ? prev : prev.filter((_, j) => j !== i)));
+  }
+
   async function saveEditDeck() {
     if (!deck) return;
     const name = editDeckName.trim();
     if (!name) return;
+    setEditDeckError(null);
+    // Validate intervals up front (reuses the tested parser: 2–10 positive ints).
+    let intervals: number[];
+    try {
+      const trimmed = editDeckIntervals.map((s) => s.trim());
+      if (trimmed.some((s) => s === '')) throw new Error('Every bucket needs an interval (in days).');
+      intervals = parseIntervalsList(trimmed.join(','));
+    } catch (e) {
+      setEditDeckError(e instanceof Error ? e.message : 'Intervals are invalid.');
+      return;
+    }
     setEditDeckPending(true);
     try {
       const updated = await db.updateDeck(deck.id, {
         name,
         description: editDeckDescription.trim() || null,
+        bucket_intervals_days: intervals,
       });
       setDeck(updated);
       setEditingDeck(false);
@@ -438,6 +472,55 @@ export default function DeckDetailScreen() {
                   { color: theme.text, borderColor: theme.textSecondary },
                 ]}
               />
+
+              <View style={styles.intervalEditGroup}>
+                <ThemedText type="smallBold">Bucket intervals</ThemedText>
+                <ThemedText themeColor="textSecondary" type="small">
+                  Days between reviews for each bucket. 2–10 buckets.
+                </ThemedText>
+                {editDeckIntervals.map((val, i) => (
+                  <View key={i} style={styles.intervalRow}>
+                    <ThemedText style={styles.intervalLetter}>{bucketLetter(i)}</ThemedText>
+                    <TextInput
+                      value={val}
+                      onChangeText={(t) => setIntervalAt(i, t)}
+                      placeholder="days"
+                      placeholderTextColor={theme.textSecondary}
+                      keyboardType="number-pad"
+                      editable={!editDeckPending}
+                      style={[styles.intervalInput, { color: theme.text, borderColor: theme.textSecondary }]}
+                    />
+                    <ThemedText themeColor="textSecondary" type="small">days</ThemedText>
+                    <Pressable
+                      onPress={() => removeIntervalBucket(i)}
+                      disabled={editDeckIntervals.length <= 2 || editDeckPending}
+                      hitSlop={8}
+                      style={styles.intervalRemove}>
+                      <ThemedText
+                        style={
+                          editDeckIntervals.length <= 2 ? styles.intervalRemoveDisabled : styles.deleteText
+                        }>
+                        Remove
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                ))}
+                {editDeckIntervals.length < 10 && (
+                  <Pressable onPress={addIntervalBucket} disabled={editDeckPending} style={styles.addBucketBtn}>
+                    <ThemedText type="small" style={styles.addBucketText}>
+                      + Add bucket {bucketLetter(editDeckIntervals.length)}
+                    </ThemedText>
+                  </Pressable>
+                )}
+                {deck.bucket_intervals_days.length > editDeckIntervals.length && (
+                  <ThemedText type="small" style={styles.warnText}>
+                    Fewer buckets than before — any cards in removed buckets will be treated as the
+                    top bucket.
+                  </ThemedText>
+                )}
+                {editDeckError && <ThemedText style={styles.errorText}>{editDeckError}</ThemedText>}
+              </View>
+
               <View style={styles.editButtons}>
                 <Pressable
                   onPress={cancelEditDeck}
@@ -841,6 +924,23 @@ const styles = StyleSheet.create({
   },
   flex1: { flex: 1 },
   deckEditMultiline: { minHeight: 60, textAlignVertical: 'top' },
+  intervalEditGroup: { gap: Spacing.two },
+  intervalRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  intervalLetter: { width: 20, fontWeight: '700' },
+  intervalInput: {
+    width: 64,
+    fontSize: 16,
+    paddingVertical: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    borderWidth: 1,
+    borderRadius: Spacing.two,
+    textAlign: 'center',
+  },
+  intervalRemove: { marginLeft: 'auto', paddingVertical: Spacing.one, paddingHorizontal: Spacing.two },
+  intervalRemoveDisabled: { color: '#888', opacity: 0.4 },
+  addBucketBtn: { paddingVertical: Spacing.one, alignSelf: 'flex-start' },
+  addBucketText: { color: '#3c87f7', fontWeight: '600' },
+  warnText: { color: '#c98a00' },
   section: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two },
   scheduleCard: { padding: Spacing.three, borderRadius: Spacing.two, gap: Spacing.two },
   scheduleHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },

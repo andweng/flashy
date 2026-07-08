@@ -98,4 +98,31 @@ describe('mockDB due-listing (last_tested_on model)', () => {
     await mockDB.applyCycleDay(child.id, deck.id, 5, TODAY);
     expect((await mockDB.listDueCardStatesForChild(child.id, TODAY)).length).toBe(0);
   });
+
+  it('resetTodaysReviewsForChild reverts the bucket and forces the card due again', async () => {
+    const { child, cards } = await setupAssignedDeck([1, 2, 4], ['a']);
+    // Simulate a completed review: card sat in bucket 0 this morning, got promoted
+    // to bucket 1 and stamped tested today (so it is not currently due).
+    await mockDB.recordReview({
+      child_id: child.id,
+      card_id: cards[0].id,
+      outcome: 'pass',
+      bucket_before: 0,
+      bucket_after: 1,
+      user_input: null,
+    });
+    await mockDB.upsertCardState(
+      stateFor(child.id, cards[0].id, { bucket_index: 1, last_tested_on: TODAY }),
+    );
+    expect((await mockDB.listDueCardStatesForChild(child.id, TODAY)).length).toBe(0);
+
+    // Reset undoes it: back to the pre-review bucket, last_tested_on cleared to null.
+    const n = await mockDB.resetTodaysReviewsForChild(child.id, TODAY, 'UTC');
+    expect(n).toBe(1);
+    const s = (await mockDB.listCardStatesForChild(child.id)).find((x) => x.card_id === cards[0].id)!;
+    expect(s.bucket_index).toBe(0);
+    expect(s.last_tested_on).toBeNull();
+    // And it is due again today.
+    expect((await mockDB.listDueCardStatesForChild(child.id, TODAY)).length).toBe(1);
+  });
 });
