@@ -3,6 +3,13 @@ import { useEffect } from 'react';
 
 import { useCurrentChild } from '@/lib/current-child';
 
+// Anchor the stack to home so a cold load / web refresh of a nested screen
+// (e.g. /review, /decks/[id]) still has a back target — otherwise the fresh
+// navigation stack has no history and the header shows no back arrow.
+export const unstable_settings = {
+  initialRouteName: 'home',
+};
+
 export default function AppLayout() {
   const { child, hydrated } = useCurrentChild();
   const router = useRouter();

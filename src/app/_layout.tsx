@@ -4,6 +4,12 @@ import { AuthProvider } from '@/lib/auth';
 import { CurrentChildProvider } from '@/lib/current-child';
 import { ThemePreferenceProvider, useResolvedColorScheme } from '@/lib/theme-preference';
 
+// Anchor the root stack to the picker so a cold load of a root-level screen
+// (e.g. /account, /add-child) keeps a back arrow to it.
+export const unstable_settings = {
+  initialRouteName: 'index',
+};
+
 function ThemedStack() {
   const colorScheme = useResolvedColorScheme();
   return (
