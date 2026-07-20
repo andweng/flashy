@@ -86,3 +86,31 @@ To reproduce the production build locally before pushing:
 ```bash
 npm run build:web   # outputs to dist/
 ```
+
+## Database backups
+
+A GitHub Action (`.github/workflows/backup.yml`) dumps the Supabase Postgres
+nightly (08:00 UTC), encrypts it with `age`, and uploads it to the private
+Cloudflare R2 bucket `flashy-backups` as `flashy/YYYY-MM-DD.dump.age`. R2 keeps
+30 days (bucket lifecycle rule). Run it on demand from Actions → **DB backup** →
+**Run workflow**.
+
+Secrets live in repo Settings → Secrets → Actions: `SUPABASE_DB_URL` (session
+pooler), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+`R2_BUCKET`, `AGE_PUBLIC_KEY`. The **age private key is not in GitHub** — it is
+in the password manager (`flashy-backup-age.key`).
+
+### Restoring from backup
+
+Restore into a **scratch** database first — never straight to production:
+
+```bash
+AGE_KEY_FILE=~/flashy-backup-age.key \
+TARGET_DB_URL="postgresql://postgres:pw@localhost:5432/flashy_restore" \
+R2_ACCOUNT_ID=... R2_BUCKET=flashy-backups \
+AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... \
+  scripts/restore-backup.sh            # latest, or pass flashy/2026-07-19.dump.age
+```
+
+Test-restore periodically and eyeball row counts — an untested backup is not a
+backup.
