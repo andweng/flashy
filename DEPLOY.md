@@ -112,5 +112,7 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... \
   scripts/restore-backup.sh            # latest, or pass flashy/2026-07-19.dump.age
 ```
 
+> **Restore target matters.** For real disaster recovery, restore into a **fresh Supabase project**, not a vanilla PostgreSQL database. A Supabase dump contains `GRANT`s and RLS policies referencing the `anon` / `authenticated` / `service_role` roles, `CREATE EXTENSION` for Supabase extensions, and `auth` / `storage` schema objects — none of which exist in a plain Postgres, so restoring there prints many "role ... does not exist" / "extension ... not available" errors. Those are expected; the `public` app tables and their rows still load. Because `pg_restore` **exits 0 even when it skips objects**, never trust the `>> restore complete` line alone — always verify row counts. Use a **PostgreSQL 17** client locally; an older `pg_restore` cannot read the PG17 custom-format archive.
+
 Test-restore periodically and eyeball row counts — an untested backup is not a
 backup.
