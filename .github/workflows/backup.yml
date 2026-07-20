@@ -1,0 +1,38 @@
+name: DB backup
+
+on:
+  schedule:
+    - cron: "0 8 * * *"   # daily 08:00 UTC
+  workflow_dispatch: {}     # manual "Run workflow" button
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL 17 client + age
+        run: |
+          set -euo pipefail
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17 age
+
+      - name: Dump, encrypt, upload to R2
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          AGE_PUBLIC_KEY: ${{ secrets.AGE_PUBLIC_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+          AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%F)"
+          /usr/lib/postgresql/17/bin/pg_dump -Fc "$SUPABASE_DB_URL" -f dump.pgc
+          age -r "$AGE_PUBLIC_KEY" -o dump.pgc.age dump.pgc
+          aws s3 cp dump.pgc.age "s3://$R2_BUCKET/flashy/$DATE.dump.age" \
+            --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          echo "Uploaded flashy/$DATE.dump.age ($(du -h dump.pgc.age | cut -f1))"
