@@ -19,6 +19,9 @@ export AWS_REQUEST_CHECKSUM_CALCULATION=WHEN_REQUIRED
 export AWS_RESPONSE_CHECKSUM_VALIDATION=WHEN_REQUIRED
 ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
+cleanup() { rm -f backup.dump.age backup.pgc; }
+trap cleanup EXIT
+
 KEY="${1:-}"
 if [[ -z "$KEY" ]]; then
   NAME="$(aws s3 ls "s3://${R2_BUCKET}/flashy/" --endpoint-url "$ENDPOINT" \
@@ -31,5 +34,4 @@ echo ">> restoring ${KEY} into ${TARGET_DB_URL%%@*}@..."
 aws s3 cp "s3://${R2_BUCKET}/${KEY}" backup.dump.age --endpoint-url "$ENDPOINT"
 age -d -i "$AGE_KEY_FILE" -o backup.pgc backup.dump.age
 pg_restore --clean --if-exists --no-owner -d "$TARGET_DB_URL" backup.pgc
-rm -f backup.dump.age backup.pgc
 echo ">> restore complete"
