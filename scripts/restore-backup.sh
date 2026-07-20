@@ -20,7 +20,7 @@ export AWS_RESPONSE_CHECKSUM_VALIDATION=WHEN_REQUIRED
 ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
 cleanup() { rm -f backup.dump.age backup.pgc; }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 KEY="${1:-}"
 if [[ -z "$KEY" ]]; then
