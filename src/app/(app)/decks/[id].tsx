@@ -217,6 +217,22 @@ export default function DeckDetailScreen() {
     setEditDeckIntervals((prev) => (prev.length <= 2 ? prev : prev.filter((_, j) => j !== i)));
   }
 
+  // Explains what removing buckets does to existing cards. `newLen` is the
+  // bucket count being saved; the removed buckets are the trailing indices
+  // [newLen, oldLen). Shows the affected count for the selected child when known.
+  function bucketRemovalMessage(newLen: number): string {
+    if (!deck) return '';
+    const oldLen = deck.bucket_intervals_days.length;
+    const removed = Array.from({ length: oldLen - newLen }, (_, k) => bucketLetter(newLen + k)).join(', ');
+    const top = bucketLetter(newLen - 1);
+    if (!currentChild) {
+      return `Removing ${removed} — cards in removed buckets will move to bucket ${top}.`;
+    }
+    const n = cards.filter((c) => (cardStates.get(c.id)?.bucket_index ?? -1) >= newLen).length;
+    if (n === 0) return `Removing ${removed} — no cards sit in the removed buckets.`;
+    return `Removing ${removed} — ${n} of ${currentChild.display_name}'s cards will move to bucket ${top}.`;
+  }
+
   async function saveEditDeck() {
     if (!deck) return;
     const name = editDeckName.trim();
@@ -240,7 +256,13 @@ export default function DeckDetailScreen() {
         bucket_intervals_days: intervals,
       });
       setDeck(updated);
+      // Drop any picker/filter state pointing at a bucket that no longer exists.
+      const topIdx = updated.bucket_intervals_days.length - 1;
+      setAddBucket((b) => Math.min(b, topIdx));
+      setGroupFilter((g) => (g == null || g <= topIdx ? g : null));
       setEditingDeck(false);
+      // Re-fetch so bucket chips reflect any re-clamped card states.
+      await refresh();
     } finally {
       setEditDeckPending(false);
     }
@@ -514,8 +536,7 @@ export default function DeckDetailScreen() {
                 )}
                 {deck.bucket_intervals_days.length > editDeckIntervals.length && (
                   <ThemedText type="small" style={styles.warnText}>
-                    Fewer buckets than before — any cards in removed buckets will be treated as the
-                    top bucket.
+                    {bucketRemovalMessage(editDeckIntervals.length)}
                   </ThemedText>
                 )}
                 {editDeckError && <ThemedText style={styles.errorText}>{editDeckError}</ThemedText>}

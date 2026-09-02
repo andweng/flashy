@@ -103,6 +103,21 @@ const states: CardState[] = (() => {
 
 const reviews: Review[] = [];
 
+// Cards in buckets that no longer exist (the deck shrank) move down to the new
+// top bucket. Only bucket_index is rewritten; last_tested_on and the top-bucket
+// pass counter carry over so due-ness and graduation progress keep flowing on
+// the new bucket's grid. States for unassigned children are re-clamped too —
+// they persist to preserve progress.
+function reclampBucketsForDeck(deckId: string, nextDeck: Deck) {
+  const topIdx = nextDeck.bucket_intervals_days.length - 1;
+  const deckCardIds = new Set(cards.filter((c) => c.deck_id === deckId).map((c) => c.id));
+  for (const s of states) {
+    if (deckCardIds.has(s.card_id) && s.bucket_index > topIdx) {
+      s.bucket_index = topIdx;
+    }
+  }
+}
+
 export const mockDB: DB = {
   async getCurrentParent() {
     return parent;
@@ -178,8 +193,10 @@ export const mockDB: DB = {
   async updateDeck(id, patch) {
     const idx = decks.findIndex((d) => d.id === id);
     if (idx < 0) throw new Error('Deck not found');
-    decks[idx] = { ...decks[idx], ...patch };
-    return decks[idx];
+    const next = { ...decks[idx], ...patch };
+    decks[idx] = next;
+    reclampBucketsForDeck(id, next);
+    return next;
   },
   async deleteDeck(id) {
     const cardIds = new Set(cards.filter((c) => c.deck_id === id).map((c) => c.id));

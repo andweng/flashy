@@ -18,6 +18,12 @@ export interface DB {
   listDecksForChild(childId: string): Promise<Deck[]>;
   getDeck(id: string): Promise<Deck | null>;
   createDeck(input: Omit<Deck, 'id'>): Promise<Deck>;
+  // When the patch shrinks bucket_intervals_days, card_states for this deck's
+  // cards whose bucket_index falls out of range are re-clamped to the new top
+  // bucket (index newLength-1): cards in removed buckets move down to the
+  // bucket below the removed one. last_tested_on and the top-bucket pass
+  // counter are left untouched, so due-ness and graduation progress carry over
+  // onto the new bucket's grid.
   updateDeck(id: string, patch: Partial<Omit<Deck, 'id' | 'parent_id'>>): Promise<Deck>;
   deleteDeck(id: string): Promise<void>;
 

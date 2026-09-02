@@ -157,7 +157,31 @@ export const supabaseDB: DB = {
       .select(DECK_COLS)
       .single();
     if (error) throw error;
-    return data as Deck;
+    const next = data as Deck;
+    if (patch.bucket_intervals_days) {
+      const topIdx = patch.bucket_intervals_days.length - 1;
+      // The deck shrank: move cards in removed buckets down to the new top
+      // bucket (index newLength-1). Only bucket_index is rewritten —
+      // last_tested_on and the top-bucket pass counter carry over. Includes
+      // states of unassigned children (they persist to preserve progress).
+      if (topIdx >= 0) {
+        const { data: cardRows, error: cErr } = await supabase
+          .from('cards')
+          .select('id')
+          .eq('deck_id', id);
+        if (cErr) throw cErr;
+        const cardIds = ((cardRows ?? []) as { id: string }[]).map((c) => c.id);
+        if (cardIds.length) {
+          const { error: sErr } = await supabase
+            .from('card_states')
+            .update({ bucket_index: topIdx })
+            .in('card_id', cardIds)
+            .gt('bucket_index', topIdx);
+          if (sErr) throw sErr;
+        }
+      }
+    }
+    return next;
   },
   async deleteDeck(id) {
     // FK cascade handles cards, deck_assignments, card_states.
