@@ -13,7 +13,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Card, CardState, Deck } from '@/types/domain';
 
-export type ReviewQueueItem = { state: CardState; card: Card; deck: Deck };
+export type ReviewQueueItem = {
+  state: CardState;
+  card: Card;
+  deck: Deck;
+  // True for permanent-pool (lottery) draws; absent on pre-feature sessions.
+  isPermanent?: boolean;
+};
 
 export type PersistedReviewSession = {
   version: 1;

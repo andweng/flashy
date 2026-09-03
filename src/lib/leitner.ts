@@ -72,16 +72,16 @@ export function dueDateForCycleDay(
 // buckets would have cards due on cycle day `cycleDay`, and how many. A card is due
 // on day N iff its repositioned date equals today (dueDateForCycleDay returns
 // exactly `today` when bucket i is tested on day N). Groups by bucket; only buckets
-// holding at least one non-graduated card appear, sorted by bucket index.
+// holding at least one non-permanent card appear, sorted by bucket index.
 export function dueGroupsForDeckOnDay(
-  states: { bucket_index: number; graduated_at: string | null }[],
+  states: { bucket_index: number; permanent_at: string | null }[],
   intervals: number[],
   cycleDay: number,
   realToday: string,
 ): { bucket: number; due: number; notDue: number }[] {
   const byBucket = new Map<number, { due: number; notDue: number }>();
   for (const s of states) {
-    if (s.graduated_at) continue;
+    if (s.permanent_at) continue;
     const isDue =
       dueDateForCycleDay(realToday, cycleDay, s.bucket_index, intervals) === realToday;
     const row = byBucket.get(s.bucket_index) ?? { due: 0, notDue: 0 };
@@ -122,21 +122,22 @@ export function mostRecentSlot(
 type DueInputs = {
   bucket_index: number;
   last_tested_on?: string | null;
-  graduated_at: string | null;
+  permanent_at: string | null;
 };
 
-// True iff a non-graduated card is due on `today`. A null/absent last_tested_on
+// True iff a non-permanent card is due on `today`. A null/absent last_tested_on
 // means "force due now" (a fresh bucket-0 card, or a card cleared by a reset), so
-// it always shows. Otherwise: due iff it has not been tested since its most recent
-// scheduled slot — which keeps it due every day until tested (rollover), including
-// across skipped days.
+// it always shows. Permanent (graduated) cards are never grid-due — they belong
+// to the daily weighted lottery instead (see pickPermanentDraws below). Otherwise:
+// due iff it has not been tested since its most recent scheduled slot — which
+// keeps it due every day until tested (rollover), including across skipped days.
 export function isDueToday(
   state: DueInputs,
   intervals: number[],
   cycleDay: number,
   today: string,
 ): boolean {
-  if (state.graduated_at) return false;
+  if (state.permanent_at) return false;
   if (state.last_tested_on == null) return true;
   return state.last_tested_on < mostRecentSlot(today, cycleDay, state.bucket_index, intervals);
 }
@@ -152,14 +153,17 @@ export type ReviewAction = { kind: 'pass' } | { kind: 'fail' };
 
 export type StateUpdate = {
   next_state: CardState;
-  graduated: boolean;
+  // True iff this pass just graduated the card into the permanent pool.
+  enteredPermanent: boolean;
 };
 
 // Apply a single review outcome under the last_tested_on model. There is no
 // catch-up/backlog: a due card is graded exactly once. Both outcomes stamp
 // last_tested_on = today, snapping the card onto its resulting bucket's grid.
-// - fail: drop to bucket 0, reset top-bucket pass counter.
-// - pass: promote one bucket (or stay at top); maybe graduate.
+// - fail: drop to bucket 0, reset top-bucket pass counter; a permanent card
+//   fails OUT of the pool and must re-earn mastery.
+// - pass: promote one bucket (or stay at top); maybe graduate into the permanent
+//   pool (its last_tested_on stamp then anchors the lottery weight).
 export function applyReview(
   state: CardState,
   deck: Deck,
@@ -176,9 +180,10 @@ export function applyReview(
         bucket_index: 0,
         last_tested_on: today,
         consecutive_passes_in_top_bucket: 0,
+        permanent_at: null, // failing a permanent card sends it back to the grind
         last_reviewed_at: nowIso,
       },
-      graduated: false,
+      enteredPermanent: false,
     };
   }
 
@@ -186,9 +191,9 @@ export function applyReview(
   const atTop = state.bucket_index >= lastIndex;
   const nextBucket = atTop ? state.bucket_index : state.bucket_index + 1;
   const nextPasses = atTop ? state.consecutive_passes_in_top_bucket + 1 : 0;
-  let graduatedAt: string | null = state.graduated_at;
+  let permanentAt: string | null = state.permanent_at;
   if (atTop && child.graduate_after_passes && nextPasses >= child.graduate_after_passes) {
-    graduatedAt = nowIso;
+    permanentAt = permanentAt ?? nowIso;
   }
 
   return {
@@ -197,11 +202,105 @@ export function applyReview(
       bucket_index: nextBucket,
       last_tested_on: today,
       consecutive_passes_in_top_bucket: nextPasses,
-      graduated_at: graduatedAt,
+      permanent_at: permanentAt,
       last_reviewed_at: nowIso,
     },
-    graduated: !!graduatedAt && !state.graduated_at,
+    enteredPermanent: !!permanentAt && !state.permanent_at,
   };
+}
+
+// ─── permanent pool draws ─────────────────────────────────────────────────────
+// Cards that reach mastery (the top-bucket pass threshold) don't retire — they
+// sit in the permanent pool (permanent_at) and keep getting re-tested by a daily
+// weighted lottery: up to `permanent_draws_per_day` per child per day.
+//
+// - Weight = (days since last test)². A card tested today has weight 0 and is
+//   impossible to redraw that day; the stalest cards dominate the draw.
+// - Draw size = min(y, pool): small pools get fully tested ("test all eligible").
+// - No stored picks and no stored weight — everything derives from last_tested_on,
+//   consistent with the derive-don't-store model above.
+// - Deterministic per (childId, today) via a seeded PRNG: the same picks all day
+//   (stable across refreshes), different picks tomorrow. A mid-day reset drops
+//   reviewed cards' weights, so a re-drawn queue naturally differs.
+
+// FNV-1a 32-bit string hash → uint32 seed material.
+export function hashSeed(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+// Small deterministic PRNG (mulberry32) → uniform float in [0, 1).
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Draw weight for one permanent card. d = days since last test:
+//   d ≤ 0 (tested today, or a future-dated stamp) → 0: impossible to redraw today.
+//   null (never tested, e.g. after a reset)      → 1: eligible, but deprioritized
+//                                                  relative to anything older.
+//   otherwise d². The square makes the penalty for recent tests steep enough
+//   that immediate re-tests are statistically unlikely, without ever being a
+//   hard exclusion (no card is barred, only weighted down).
+export function permanentWeight(lastTestedOn: string | null, today: string): number {
+  const d = lastTestedOn == null ? 1 : Math.max(0, daysBetween(lastTestedOn, today));
+  return d * d;
+}
+
+export type PermanentDrawCandidate = {
+  permanent_at: string | null;
+  last_tested_on: string | null;
+};
+
+// Weighted sampling without replacement, seeded deterministically by `seedStr`
+// (pass something like `keeper:${childId}:${today}`): same pool + y + today +
+// seed → same picks, every call. Returns min(y, pool.length) cards — when the
+// pool is smaller than y the whole pool is drawn ("test all eligible"). Within
+// a round, a zero-weight card gets zero probability mass, so it is provably not
+// drawn while any other card has weight; if every remaining card is zero-weight
+// (e.g. a small pool all tested earlier today after a reset) the round falls
+// back to a uniform pick so the pool still cycles.
+export function pickPermanentDraws<T extends PermanentDrawCandidate>(
+  pool: T[],
+  y: number,
+  today: string,
+  seedStr: string,
+): T[] {
+  if (y <= 0 || pool.length === 0) return [];
+  const rand = mulberry32(hashSeed(seedStr));
+  const remaining = [...pool];
+  const out: T[] = [];
+  const count = Math.min(y, remaining.length);
+  for (let i = 0; i < count; i++) {
+    const weights = remaining.map((c) => permanentWeight(c.last_tested_on, today));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let idx: number;
+    if (total <= 0) {
+      idx = Math.floor(rand() * remaining.length);
+    } else {
+      let r = rand() * total;
+      idx = remaining.length - 1;
+      for (let j = 0; j < remaining.length; j++) {
+        r -= weights[j];
+        if (r < 0) {
+          idx = j;
+          break;
+        }
+      }
+    }
+    out.push(remaining[idx]);
+    remaining.splice(idx, 1);
+  }
+  return out;
 }
 
 // Normalize typed input for auto-checking (case + whitespace + simple punctuation).

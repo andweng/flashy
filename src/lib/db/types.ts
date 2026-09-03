@@ -38,6 +38,11 @@ export interface DB {
   unassignDeckFromChild(deckId: string, childId: string): Promise<void>;
 
   listDueCardStatesForChild(childId: string, today: string): Promise<CardStateWithCard[]>;
+  // Permanent (mastery) pool draws for today: up to the child's
+  // permanent_draws_per_day cards, weighted by days-since-last-test (see
+  // pickPermanentDraws in leitner.ts). Same assigned-deck gate as
+  // listDueCardStatesForChild; the seeded draw is stable for the whole day.
+  listPermanentDrawsForChild(childId: string, today: string): Promise<CardStateWithCard[]>;
   listCardStatesForChild(childId: string): Promise<CardState[]>;
   countDueCardsForChild(childId: string, today: string): Promise<number>;
   upsertCardState(state: CardState): Promise<void>;

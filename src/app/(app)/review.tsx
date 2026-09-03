@@ -30,6 +30,8 @@ type QueueItem = {
   state: CardState;
   card: Card;
   deck: Deck;
+  // Permanent-pool (lottery) draw; such cards trail the grid-due queue.
+  isPermanent?: boolean;
 };
 
 type TypedResult = 'correct' | 'wrong' | null;
@@ -90,17 +92,26 @@ export default function ReviewScreen() {
         return;
       }
 
-      const due = await db.listDueCardStatesForChild(childId, _today);
+      const [due, keepers] = await Promise.all([
+        db.listDueCardStatesForChild(childId, _today),
+        db.listPermanentDrawsForChild(childId, _today),
+      ]);
       if (cancelled) return;
-      // One item per due card — no backlog stacking. Strip the joined card/deck so
+      // One item per card — no backlog stacking. Strip the joined card/deck so
       // `state` is a pure CardState; otherwise those objects ride along through
       // applyReview's spread into the card_states upsert as non-existent columns,
       // which Supabase rejects — silently aborting recordAndAdvance.
-      const queue: QueueItem[] = due.map((s) => {
+      const toItem = (s: (typeof due)[number], isPermanent: boolean): QueueItem => {
         const { card, deck, ...state } = s;
-        return { state, card, deck };
-      });
-      const ordered = orderWithinBuckets(queue);
+        return { state, card, deck, isPermanent };
+      };
+      // Grid-due cards keep their bucket grouping (shuffled within bucket);
+      // permanent draws trail the queue in lottery order, never merged into a
+      // bucket group.
+      const ordered = [
+        ...orderWithinBuckets(due.map((s) => toItem(s, false))),
+        ...keepers.map((s) => toItem(s, true)),
+      ];
       setToday(_today);
       setItems(ordered);
       setIndex(0);
@@ -158,6 +169,9 @@ export default function ReviewScreen() {
       bucket_before: item.state.bucket_index,
       bucket_after: update.next_state.bucket_index,
       user_input: input,
+      // Lets "reset today" undo fresh graduations while preserving cards that
+      // were already permanent this morning.
+      was_permanent_before: !!item.state.permanent_at,
     });
 
     const nextPasses = outcome === 'pass' ? passes + 1 : passes;
@@ -223,7 +237,8 @@ export default function ReviewScreen() {
         <ProgressBar current={index + 1} total={items.length} />
 
         <ThemedText themeColor="textSecondary" type="small" style={styles.meta}>
-          {current.deck.name} · Bucket {bucketLetter(current.state.bucket_index)}
+          {current.deck.name} ·{' '}
+          {current.isPermanent ? '🏆 Permanent' : `Bucket ${bucketLetter(current.state.bucket_index)}`}
         </ThemedText>
 
         <ThemedView type="backgroundElement" style={styles.cardArea}>

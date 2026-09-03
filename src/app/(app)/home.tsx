@@ -22,12 +22,16 @@ export default function HomeScreen() {
     void (async () => {
       const parent = await db.getCurrentParent();
       const today = getEffectiveToday(parent?.timezone ?? 'UTC');
-      const due = await db.listDueCardStatesForChild(child.id, today);
+      const [due, keepers] = await Promise.all([
+        db.listDueCardStatesForChild(child.id, today),
+        db.listPermanentDrawsForChild(child.id, today),
+      ]);
 
-      // listDueCardStatesForChild returns one row per due card (no backlog
-      // stacking), so each contributes exactly one to its deck's count.
+      // The due list returns one row per due card (no backlog stacking) and the
+      // permanent lottery up to one row per keeper, so each row contributes
+      // exactly one to its deck's count.
       const byDeck = new Map<string, DeckSummary>();
-      for (const s of due) {
+      for (const s of [...due, ...keepers]) {
         const existing = byDeck.get(s.deck.id);
         if (existing) existing.due += 1;
         else byDeck.set(s.deck.id, { id: s.deck.id, name: s.deck.name, due: 1 });
@@ -55,7 +59,7 @@ export default function HomeScreen() {
             ? '…'
             : totalDue === 0
               ? 'All caught up! 🎉'
-              : `${totalDue} card${totalDue === 1 ? '' : 's'} due today`}
+              : `${totalDue} card${totalDue === 1 ? '' : 's'} to review today`}
         </ThemedText>
 
         <View style={styles.deckList}>

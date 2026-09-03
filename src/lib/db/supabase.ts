@@ -3,18 +3,19 @@
 // where the API takes it as input.
 
 import { supabase } from '@/lib/supabase';
-import { addDays, cycleDayOf, isDueToday, todayInTz } from '@/lib/leitner';
+import { addDays, cycleDayOf, isDueToday, pickPermanentDraws, todayInTz } from '@/lib/leitner';
 import type { Card, CardState, Child, Deck, DeckAssignment, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
 const PARENT_COLS = 'id, display_name, timezone';
-const CHILD_COLS = 'id, parent_id, display_name, avatar, graduate_after_passes';
+const CHILD_COLS =
+  'id, parent_id, display_name, avatar, graduate_after_passes, permanent_draws_per_day';
 const DECK_COLS = 'id, parent_id, name, description, bucket_intervals_days';
 const CARD_COLS = 'id, deck_id, front, back, grading_mode, typed_alternates, choices';
 const CARD_STATE_COLS =
-  'child_id, card_id, bucket_index, last_tested_on, consecutive_passes_in_top_bucket, graduated_at, last_reviewed_at';
+  'child_id, card_id, bucket_index, last_tested_on, consecutive_passes_in_top_bucket, permanent_at, last_reviewed_at';
 const REVIEW_COLS =
-  'id, child_id, card_id, reviewed_at, outcome, bucket_before, bucket_after, user_input';
+  'id, child_id, card_id, reviewed_at, outcome, bucket_before, bucket_after, user_input, was_permanent_before';
 
 export const supabaseDB: DB = {
   async getCurrentParent(): Promise<Parent | null> {
@@ -228,7 +229,7 @@ export const supabaseDB: DB = {
         bucket_index: 0,
         last_tested_on: null,
         consecutive_passes_in_top_bucket: 0,
-        graduated_at: null,
+        permanent_at: null,
         last_reviewed_at: null,
       }));
       const { error: e3 } = await supabase
@@ -280,7 +281,7 @@ export const supabaseDB: DB = {
         bucket_index: 0,
         last_tested_on: null,
         consecutive_passes_in_top_bucket: 0,
-        graduated_at: null,
+        permanent_at: null,
         last_reviewed_at: null,
       }));
       const { error: e3 } = await supabase
@@ -325,7 +326,7 @@ export const supabaseDB: DB = {
         )
       `)
       .eq('child_id', childId)
-      .is('graduated_at', null);
+      .is('permanent_at', null);
     if (error) throw error;
 
     type Row = CardState & { card: Card & { deck: Deck } };
@@ -340,6 +341,48 @@ export const supabaseDB: DB = {
         const cycleDay = cycleDayOf(startByDeck.get(row.deck.id) ?? null, today);
         return isDueToday(row, row.deck.bucket_intervals_days, cycleDay, today);
       });
+  },
+
+  async listPermanentDrawsForChild(childId, today): Promise<CardStateWithCard[]> {
+    // The daily weighted lottery over this child's permanent (mastery) cards
+    // (see pickPermanentDraws in leitner.ts). Same assigned-deck gate as the
+    // due list, so keepers from unassigned decks never leak into review.
+    const child = await supabaseDB.getChild(childId);
+    if (!child || child.permanent_draws_per_day <= 0) return [];
+    const { data: assignRows, error: assignErr } = await supabase
+      .from('deck_assignments')
+      .select('deck_id')
+      .eq('child_id', childId);
+    if (assignErr) throw assignErr;
+    const assigned = new Set((assignRows ?? []).map((r) => r.deck_id as string));
+
+    const { data, error } = await supabase
+      .from('card_states')
+      .select(`
+        ${CARD_STATE_COLS},
+        card:cards!inner(
+          ${CARD_COLS},
+          deck:decks!inner(${DECK_COLS})
+        )
+      `)
+      .eq('child_id', childId)
+      .not('permanent_at', 'is', null);
+    if (error) throw error;
+
+    type Row = CardState & { card: Card & { deck: Deck } };
+    const pool = ((data as unknown as Row[]) ?? [])
+      .map((row) => {
+        const { card, ...stateFields } = row;
+        const { deck, ...cardFields } = card;
+        return { ...stateFields, card: cardFields, deck };
+      })
+      .filter((row) => assigned.has(row.deck.id));
+    return pickPermanentDraws(
+      pool,
+      child.permanent_draws_per_day,
+      today,
+      `keeper:${childId}:${today}`,
+    );
   },
 
   async listCardStatesForChild(childId): Promise<CardState[]> {
@@ -383,7 +426,7 @@ export const supabaseDB: DB = {
     const sinceIso = `${addDays(realToday, -1)}T00:00:00.000Z`;
     const { data: recent, error } = await supabase
       .from('reviews')
-      .select('id, card_id, bucket_before, reviewed_at')
+      .select('id, card_id, bucket_before, was_permanent_before, reviewed_at')
       .eq('child_id', childId)
       .gte('reviewed_at', sinceIso)
       .order('reviewed_at', { ascending: true });
@@ -396,11 +439,29 @@ export const supabaseDB: DB = {
 
     // The earliest review of the day holds the bucket the card had this morning.
     const bucketBefore = new Map<string, number>();
+    const permanentBefore = new Map<string, boolean>();
     for (const r of todays) {
       if (!bucketBefore.has(r.card_id as string)) {
         bucketBefore.set(r.card_id as string, r.bucket_before as number);
+        permanentBefore.set(r.card_id as string, (r.was_permanent_before as boolean) ?? false);
       }
     }
+
+    // For cards that were already permanent before today, the reset must keep
+    // their (unchanged) permanent_at timestamp; only today's fresh graduations
+    // get undone.
+    const { data: stateRows, error: stateErr } = await supabase
+      .from('card_states')
+      .select('card_id, permanent_at')
+      .eq('child_id', childId)
+      .in('card_id', [...bucketBefore.keys()]);
+    if (stateErr) throw stateErr;
+    const currentPermanentAt = new Map<string, string | null>(
+      (stateRows ?? []).map((r) => [
+        r.card_id as string,
+        (r.permanent_at as string | null) ?? null,
+      ]),
+    );
 
     for (const [cardId, bucket] of bucketBefore) {
       const { error: upErr } = await supabase
@@ -409,7 +470,9 @@ export const supabaseDB: DB = {
           bucket_index: bucket,
           last_tested_on: null, // force due again for the rest of today
           consecutive_passes_in_top_bucket: 0,
-          graduated_at: null,
+          permanent_at: permanentBefore.get(cardId)
+            ? currentPermanentAt.get(cardId) ?? null
+            : null,
           last_reviewed_at: null,
         })
         .eq('child_id', childId)

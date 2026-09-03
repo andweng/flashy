@@ -1,7 +1,7 @@
 // In-memory mock DB used while building UI. Reads/writes a fixture set.
 // Swap to a Supabase-backed impl in lib/db/index.ts when ready.
 
-import { addDays, cycleDayOf, isDueToday, todayInTz } from '@/lib/leitner';
+import { addDays, cycleDayOf, isDueToday, pickPermanentDraws, todayInTz } from '@/lib/leitner';
 import type { Card, CardState, Child, Deck, DeckAssignment, GradingMode, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
@@ -15,8 +15,8 @@ const parent: Parent = {
 };
 
 const children: Child[] = [
-  { id: 'c1', parent_id: 'p1', display_name: 'Mira', avatar: '🦊', graduate_after_passes: null },
-  { id: 'c2', parent_id: 'p1', display_name: 'Eli', avatar: '🐻', graduate_after_passes: 3 },
+  { id: 'c1', parent_id: 'p1', display_name: 'Mira', avatar: '🦊', graduate_after_passes: null, permanent_draws_per_day: 0 },
+  { id: 'c2', parent_id: 'p1', display_name: 'Eli', avatar: '🐻', graduate_after_passes: 3, permanent_draws_per_day: 2 },
 ];
 
 const decks: Deck[] = [
@@ -93,7 +93,7 @@ const states: CardState[] = (() => {
         bucket_index: p.bucket,
         last_tested_on: p.lastTested,
         consecutive_passes_in_top_bucket: 0,
-        graduated_at: null,
+        permanent_at: null,
         last_reviewed_at: null,
       });
     });
@@ -234,7 +234,7 @@ export const mockDB: DB = {
         bucket_index: 0,
         last_tested_on: null,
         consecutive_passes_in_top_bucket: 0,
-        graduated_at: null,
+        permanent_at: null,
         last_reviewed_at: null,
       });
     }
@@ -271,7 +271,7 @@ export const mockDB: DB = {
           bucket_index: 0,
           last_tested_on: null,
           consecutive_passes_in_top_bucket: 0,
-          graduated_at: null,
+          permanent_at: null,
           last_reviewed_at: null,
         });
       }
@@ -294,7 +294,7 @@ export const mockDB: DB = {
         .map((a) => [a.deck_id, a.cycle_start_date ?? null]),
     );
     return states
-      .filter((s) => s.child_id === childId && !s.graduated_at)
+      .filter((s) => s.child_id === childId && !s.permanent_at)
       .map((s) => {
         const card = cards.find((c) => c.id === s.card_id)!;
         const deck = decks.find((d) => d.id === card.deck_id)!;
@@ -305,6 +305,25 @@ export const mockDB: DB = {
         const cycleDay = cycleDayOf(startByDeck.get(row.deck.id) ?? null, today);
         return isDueToday(row, row.deck.bucket_intervals_days, cycleDay, today);
       });
+  },
+  async listPermanentDrawsForChild(childId, today): Promise<CardStateWithCard[]> {
+    // The daily weighted lottery over this child's permanent (mastery) cards.
+    // Same assigned-deck gate as the due list; the draw itself is the pure,
+    // day-stable pickPermanentDraws (seeded by child+today).
+    const child = children.find((c) => c.id === childId);
+    if (!child || child.permanent_draws_per_day <= 0) return [];
+    const startByDeck = new Set(
+      assignments.filter((a) => a.child_id === childId).map((a) => a.deck_id),
+    );
+    const pool = states
+      .filter((s) => s.child_id === childId && s.permanent_at)
+      .map((s) => {
+        const card = cards.find((c) => c.id === s.card_id)!;
+        const deck = decks.find((d) => d.id === card.deck_id)!;
+        return { ...s, card, deck };
+      })
+      .filter((row) => startByDeck.has(row.deck.id));
+    return pickPermanentDraws(pool, child.permanent_draws_per_day, today, `keeper:${childId}:${today}`);
   },
   async listCardStatesForChild(childId) {
     return states.filter((s) => s.child_id === childId);
@@ -338,8 +357,12 @@ export const mockDB: DB = {
     if (todays.length === 0) return 0;
 
     const bucketBefore = new Map<string, number>();
+    const permanentBefore = new Map<string, boolean>();
     for (const r of todays) {
-      if (!bucketBefore.has(r.card_id)) bucketBefore.set(r.card_id, r.bucket_before);
+      if (!bucketBefore.has(r.card_id)) {
+        bucketBefore.set(r.card_id, r.bucket_before);
+        permanentBefore.set(r.card_id, r.was_permanent_before);
+      }
     }
 
     for (const [cardId, bucket] of bucketBefore) {
@@ -350,7 +373,9 @@ export const mockDB: DB = {
           bucket_index: bucket,
           last_tested_on: null, // force due again for the rest of today
           consecutive_passes_in_top_bucket: 0,
-          graduated_at: null,
+          // Preserve permanent status only for cards already permanent before
+          // today; today's fresh graduations are undone by the reset.
+          permanent_at: permanentBefore.get(cardId) ? states[idx].permanent_at : null,
           last_reviewed_at: null,
         };
       }

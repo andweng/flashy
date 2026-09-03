@@ -143,7 +143,7 @@ export default function DeckDetailScreen() {
           // natural schedule (bucket 0 due now, higher buckets at their next slot).
           last_tested_on: addDueToday ? null : initialLastTested(realToday, addBucket),
           consecutive_passes_in_top_bucket: 0,
-          graduated_at: null,
+          permanent_at: null,
           last_reviewed_at: null,
         });
       }
@@ -279,7 +279,7 @@ export default function DeckDetailScreen() {
       // Re-bucketing puts the card on its natural schedule for the new bucket.
       last_tested_on: initialLastTested(realToday, bucketIndex),
       consecutive_passes_in_top_bucket: 0,
-      graduated_at: null,
+      permanent_at: null,
       last_reviewed_at: existing?.last_reviewed_at ?? null,
     };
     await db.upsertCardState(newState);
@@ -294,7 +294,7 @@ export default function DeckDetailScreen() {
   async function toggleDue(cardId: string) {
     if (!currentChild || !deck) return;
     const existing = cardStates.get(cardId);
-    if (!existing || existing.graduated_at) return;
+    if (!existing || existing.permanent_at) return;
     const realToday = getEffectiveToday(scheduleTz);
     const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
     const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
@@ -832,7 +832,7 @@ export default function DeckDetailScreen() {
                   <View style={styles.rowActions}>
                     {currentChild &&
                       cardStates.has(card.id) &&
-                      !cardStates.get(card.id)!.graduated_at && (
+                      !cardStates.get(card.id)!.permanent_at && (
                         <Pressable
                           onPress={() => toggleDue(card.id)}
                           style={[

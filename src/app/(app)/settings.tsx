@@ -27,6 +27,7 @@ export default function SettingsScreen() {
   const [graduateN, setGraduateN] = useState<string>(
     child?.graduate_after_passes != null ? String(child.graduate_after_passes) : '3',
   );
+  const [permY, setPermY] = useState<string>(String(child?.permanent_draws_per_day ?? 0));
 
   const [savePending, setSavePending] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
@@ -50,6 +51,7 @@ export default function SettingsScreen() {
     setAvatar(child.avatar ?? AVATARS[0]);
     setGraduateEnabled(child.graduate_after_passes != null);
     setGraduateN(child.graduate_after_passes != null ? String(child.graduate_after_passes) : '3');
+    setPermY(String(child.permanent_draws_per_day));
   }, [child]);
 
   if (!child) return null;
@@ -59,7 +61,8 @@ export default function SettingsScreen() {
     avatar !== (child.avatar ?? AVATARS[0]) ||
     (graduateEnabled
       ? parseInt(graduateN, 10) !== child.graduate_after_passes
-      : child.graduate_after_passes !== null);
+      : child.graduate_after_passes !== null) ||
+    (parseInt(permY, 10) || 0) !== child.permanent_draws_per_day;
 
   async function save() {
     const trimmed = name.trim();
@@ -76,6 +79,7 @@ export default function SettingsScreen() {
         display_name: trimmed,
         avatar,
         graduate_after_passes: n,
+        permanent_draws_per_day: Math.max(0, parseInt(permY, 10) || 0),
       });
       setChild(updated);
       setSaveFeedback('Saved.');
@@ -130,8 +134,12 @@ export default function SettingsScreen() {
       const parent = await db.getCurrentParent();
       const tz = parent?.timezone ?? 'UTC';
       const today = getEffectiveToday(tz);
-      const due = await db.listDueCardStatesForChild(child.id, today);
-      for (const item of due) {
+      const [due, keepers] = await Promise.all([
+        db.listDueCardStatesForChild(child.id, today),
+        db.listPermanentDrawsForChild(child.id, today),
+      ]);
+      const all = [...due, ...keepers];
+      for (const item of all) {
         // listDue returns CardState joined with card/deck; pare it back to a
         // plain CardState so only real columns reach upsertCardState.
         const state: CardState = {
@@ -140,7 +148,7 @@ export default function SettingsScreen() {
           bucket_index: item.bucket_index,
           last_tested_on: item.last_tested_on,
           consecutive_passes_in_top_bucket: item.consecutive_passes_in_top_bucket,
-          graduated_at: item.graduated_at,
+          permanent_at: item.permanent_at,
           last_reviewed_at: item.last_reviewed_at,
         };
         // Treat each due card as one passed review: promote its bucket and stamp
@@ -155,12 +163,13 @@ export default function SettingsScreen() {
           bucket_before: state.bucket_index,
           bucket_after: update.next_state.bucket_index,
           user_input: null,
+          was_permanent_before: !!state.permanent_at,
         });
       }
       setDoneFeedback(
-        due.length === 0
+        all.length === 0
           ? 'No cards due today.'
-          : `Marked ${due.length} card${due.length === 1 ? '' : 's'} done for today.`,
+          : `Marked ${all.length} card${all.length === 1 ? '' : 's'} done for today.`,
       );
       setTimeout(() => setDoneFeedback(null), 3000);
     } catch (e) {
@@ -229,8 +238,9 @@ export default function SettingsScreen() {
           <ThemedView type="backgroundElement" style={styles.section}>
             <View style={styles.switchRow}>
               <View style={styles.switchText}>
-                <ThemedText>Graduate cards out of the top bucket</ThemedText>
+                <ThemedText>Graduate cards into the permanent bucket</ThemedText>
                 <ThemedText themeColor="textSecondary" type="small">
+                  Graduated cards leave the normal rotation but get re-tested a little every day.
                   When off, top-bucket cards keep cycling forever.
                 </ThemedText>
               </View>
@@ -249,6 +259,21 @@ export default function SettingsScreen() {
                 <ThemedText>consecutive top-bucket passes</ThemedText>
               </View>
             )}
+            <View style={styles.graduateRow}>
+              <ThemedText>Test up to</ThemedText>
+              <TextInput
+                value={permY}
+                onChangeText={setPermY}
+                keyboardType="number-pad"
+                editable={!savePending}
+                style={[styles.numInput, { color: theme.text, borderColor: theme.textSecondary }]}
+              />
+              <ThemedText>permanent cards per day</ThemedText>
+            </View>
+            <ThemedText themeColor="textSecondary" type="small">
+              Recently re-tested cards are less likely to be drawn. 0 = never re-test them
+              (effectively retired).
+            </ThemedText>
           </ThemedView>
 
           {error && <ThemedText style={styles.error}>{error}</ThemedText>}

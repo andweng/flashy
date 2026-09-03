@@ -103,7 +103,7 @@ export default function ImportDeckScreen() {
             // Imported cards enter on their natural schedule for their bucket.
             last_tested_on: initialLastTested(realToday, c.bucket),
             consecutive_passes_in_top_bucket: 0,
-            graduated_at: null,
+            permanent_at: null,
             last_reviewed_at: null,
           });
         }
