@@ -16,7 +16,6 @@ import {
   cycleDayOf,
   dueGroupsForDeckOnDay,
   initialLastTested,
-  isDueToday,
   parseIntervalsList,
   togglePermanent,
 } from '@/lib/leitner';
@@ -290,25 +289,6 @@ export default function DeckDetailScreen() {
       return next;
     });
     setBucketPickerCardId(null);
-  }
-
-  async function toggleDue(cardId: string) {
-    if (!currentChild || !deck) return;
-    const existing = cardStates.get(cardId);
-    if (!existing || existing.permanent_at) return;
-    const realToday = getEffectiveToday(scheduleTz);
-    const assignment = await db.getDeckAssignment(deck.id, currentChild.id);
-    const cycleDay = cycleDayOf(assignment?.cycle_start_date ?? null, realToday);
-    // Toggle: if it's currently due, mark it tested today (drops off today's
-    // queue); if not, force it due now (null).
-    const currentlyDue = isDueToday(existing, deck.bucket_intervals_days, cycleDay, realToday);
-    const newState: CardState = { ...existing, last_tested_on: currentlyDue ? realToday : null };
-    await db.upsertCardState(newState);
-    setCardStates((m) => {
-      const next = new Map(m);
-      next.set(cardId, newState);
-      return next;
-    });
   }
 
   // Manually move a card into / back out of the permanent pool (reversible).
@@ -846,23 +826,6 @@ export default function DeckDetailScreen() {
                     </ThemedText>
                   </Pressable>
                   <View style={styles.rowActions}>
-                    {currentChild &&
-                      cardStates.has(card.id) &&
-                      !cardStates.get(card.id)!.permanent_at && (
-                        <Pressable
-                          onPress={() => toggleDue(card.id)}
-                          style={[
-                            styles.dueChip,
-                            isDueToday(
-                              cardStates.get(card.id)!,
-                              deck.bucket_intervals_days,
-                              appliedDay,
-                              realToday,
-                            ) && styles.dueChipActive,
-                          ]}>
-                          <ThemedText type="small">Due today</ThemedText>
-                        </Pressable>
-                      )}
                     {currentChild && cardStates.has(card.id) && (
                       <Pressable
                         onPress={() =>
