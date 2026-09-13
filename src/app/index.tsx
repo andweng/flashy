@@ -32,15 +32,21 @@ export default function ProfilePicker() {
         const list = await db.listChildren(parent.id);
         if (!cancelled) setChildren(list);
 
-        // Tally each child's cards due today for the "needs review" dot.
-        // Due counts compare against the real calendar day; each deck's schedule is
-        // pre-positioned per (child, deck), so there's no per-child read-time offset.
+        // Tally each child's cards to review today for the "needs review" dot:
+        // grid-due cards plus today's permanent-pool (lottery) draws — the same two
+        // sets the review screen actually queues (they're disjoint: a card is either
+        // permanent or grid-due). Counts compare against the real calendar day; each
+        // deck's schedule is pre-positioned per (child, deck), so there's no
+        // per-child read-time offset.
+        const today = getEffectiveToday(parent.timezone);
         const counts = await Promise.all(
-          list.map((c) =>
-            db
-              .countDueCardsForChild(c.id, getEffectiveToday(parent.timezone))
-              .catch(() => 0),
-          ),
+          list.map(async (c) => {
+            const [due, permDraws] = await Promise.all([
+              db.countDueCardsForChild(c.id, today).catch(() => 0),
+              db.listPermanentDrawsForChild(c.id, today).then((d) => d.length).catch(() => 0),
+            ]);
+            return due + permDraws;
+          }),
         );
         if (!cancelled) {
           setDueByChild(Object.fromEntries(list.map((c, i) => [c.id, counts[i]])));
