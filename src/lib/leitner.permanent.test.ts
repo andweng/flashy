@@ -68,10 +68,21 @@ describe('pickPermanentDraws — basic behavior', () => {
     expect(new Set(drawn.map((c) => c.card_id))).toEqual(new Set(['c0', 'c1', 'c2']));
   });
 
-  it('still tests the whole pool when every card is zero-weight (e.g. small pool, all tested earlier today)', () => {
-    const pool = makePool(3, 0); // all tested today → weight 0
+  it('draws nothing when every card was tested today (the due count falls to 0)', () => {
+    const pool = makePool(3, 0); // all tested today → weight 0 → none eligible
     const drawn = pickPermanentDraws(pool, 3, BASE, 'keeper:child-1');
-    expect(drawn.length).toBe(3);
+    expect(drawn.length).toBe(0);
+  });
+
+  it('completing a small pool leaves nothing due: reviewed cards drop off the same day', () => {
+    const pool = makePool(8, 3); // 8 permanent cards, each last tested 3 days ago
+    const first = pickPermanentDraws(pool, 8, BASE, 'keeper:child-1');
+    expect(first.length).toBe(8); // all 8 eligible today
+    first.forEach((c) => {
+      c.last_tested_on = BASE; // simulate reviewing all 8 today
+    });
+    const second = pickPermanentDraws(pool, 8, BASE, 'keeper:child-1');
+    expect(second.length).toBe(0); // all tested today → nothing left due
   });
 
   it('changes picks across days (the seed includes today)', () => {

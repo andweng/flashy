@@ -287,13 +287,12 @@ export type PermanentDrawCandidate = {
 };
 
 // Weighted sampling without replacement, seeded deterministically by `seedStr`
-// (pass something like `keeper:${childId}:${today}`): same pool + y + today +
-// seed → same picks, every call. Returns min(y, pool.length) cards — when the
-// pool is smaller than y the whole pool is drawn ("test all eligible"). Within
-// a round, a zero-weight card gets zero probability mass, so it is provably not
-// drawn while any other card has weight; if every remaining card is zero-weight
-// (e.g. a small pool all tested earlier today after a reset) the round falls
-// back to a uniform pick so the pool still cycles.
+// (pass something like `keeper:${childId}:${today}`): same eligible set + y +
+// today + seed → same picks, every call. Returns min(y, eligible) cards, where
+// eligible = cards not tested today (weight > 0). Reviewing a card stamps it
+// tested-today, so it drops off the day's draw and the due count falls to 0 as
+// you complete the set — like a grid-due card. A pool with fewer eligible cards
+// than y is fully drawn ("test all eligible").
 export function pickPermanentDraws<T extends PermanentDrawCandidate>(
   pool: T[],
   y: number,
@@ -302,7 +301,10 @@ export function pickPermanentDraws<T extends PermanentDrawCandidate>(
 ): T[] {
   if (y <= 0 || pool.length === 0) return [];
   const rand = mulberry32(hashSeed(seedStr));
-  const remaining = [...pool];
+  // Eligible = not tested today. This is what makes a reviewed permanent card drop
+  // off today's draw (weight 0 ⇒ tested today) instead of the whole pool being
+  // re-drawn, so the due count falls to 0 as you complete the set.
+  const remaining = pool.filter((c) => permanentWeight(c.last_tested_on, today) > 0);
   const out: T[] = [];
   const count = Math.min(y, remaining.length);
   for (let i = 0; i < count; i++) {
