@@ -886,11 +886,11 @@ export default function DeckDetailScreen() {
                         </ThemedText>
                       </Pressable>
                     )}
-                    <Pressable onPress={() => startEdit(card)}>
-                      <ThemedText themeColor="textSecondary">Edit</ThemedText>
+                    <Pressable onPress={() => startEdit(card)} accessibilityLabel="Edit card">
+                      <ThemedText themeColor="textSecondary">✏️</ThemedText>
                     </Pressable>
-                    <Pressable onPress={() => removeCard(card.id)}>
-                      <ThemedText style={styles.deleteText}>Delete</ThemedText>
+                    <Pressable onPress={() => removeCard(card.id)} accessibilityLabel="Delete card">
+                      <ThemedText style={styles.deleteText}>🗑️</ThemedText>
                     </Pressable>
                   </View>
                 </View>
@@ -1062,7 +1062,7 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     gap: Spacing.three,
   },
-  cardRowMain: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  cardRowMain: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: Spacing.three },
   cardText: { flex: 1, gap: Spacing.half },
   bucketChip: {
     paddingVertical: Spacing.one,
