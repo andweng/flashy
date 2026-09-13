@@ -209,6 +209,31 @@ export function applyReview(
   };
 }
 
+// Manually move a card into (or back out of) the permanent pool, bypassing the
+// natural mastery graduation (applyReview). Reversible:
+//   not-permanent → permanent: set permanent_at + stamp last_tested_on = today,
+//     so it joins the daily lottery but is weight 0 today (not redrawn until a
+//     later day). Preserves the current bucket/pass counter — a manual override
+//     is allowed from any bucket.
+//   permanent → not-permanent: clear permanent_at, re-enter on today's grid, and
+//     reset the top-bucket pass counter so the card re-earns mastery rather than
+//     instantly re-graduating on its next top-bucket pass.
+export function togglePermanent(state: CardState, today: string): CardState {
+  if (state.permanent_at) {
+    return {
+      ...state,
+      permanent_at: null,
+      last_tested_on: today,
+      consecutive_passes_in_top_bucket: 0,
+    };
+  }
+  return {
+    ...state,
+    permanent_at: new Date().toISOString(),
+    last_tested_on: today,
+  };
+}
+
 // ─── permanent pool draws ─────────────────────────────────────────────────────
 // Cards that reach mastery (the top-bucket pass threshold) don't retire — they
 // sit in the permanent pool (permanent_at) and keep getting re-tested by a daily

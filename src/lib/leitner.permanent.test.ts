@@ -3,8 +3,16 @@
 // property that recently-tested cards are unlikely to be re-drawn. All draws are
 // seeded, so every assertion here is fully reproducible.
 
-import { addDays, pickPermanentDraws, permanentWeight } from '@/lib/leitner';
+import {
+  addDays,
+  DEFAULT_BUCKET_INTERVALS,
+  isDueToday,
+  pickPermanentDraws,
+  permanentWeight,
+  togglePermanent,
+} from '@/lib/leitner';
 import type { PermanentDrawCandidate } from '@/lib/leitner';
+import type { CardState } from '@/types/domain';
 
 const BASE = '2026-07-08';
 
@@ -119,5 +127,56 @@ describe('pickPermanentDraws — deprioritization of recent tests', () => {
     // Immediate re-tests are statistically rare (a card tested today has weight
     // 0 that day, then weight 1 vs ~25 for the rest of the pool the next day).
     expect(consecutiveDayRepeats).toBeLessThanOrEqual(15);
+  });
+});
+
+function makeState(overrides: Partial<CardState> = {}): CardState {
+  return {
+    child_id: 'c1',
+    card_id: 'k1',
+    bucket_index: 0,
+    last_tested_on: addDays(BASE, -3),
+    consecutive_passes_in_top_bucket: 0,
+    permanent_at: null,
+    last_reviewed_at: null,
+    ...overrides,
+  };
+}
+
+describe('togglePermanent', () => {
+  const intervals = DEFAULT_BUCKET_INTERVALS;
+
+  it('promote: sets permanent_at, stamps last_tested_on = today, becomes non-due', () => {
+    const out = togglePermanent(makeState(), BASE);
+    expect(out.permanent_at).not.toBeNull();
+    expect(out.last_tested_on).toBe(BASE);
+    expect(isDueToday(out, intervals, 5, BASE)).toBe(false);
+  });
+
+  it('promote: preserves bucket + pass counter (manual override from any bucket)', () => {
+    const out = togglePermanent(makeState({ bucket_index: 2, consecutive_passes_in_top_bucket: 1 }), BASE);
+    expect(out.bucket_index).toBe(2);
+    expect(out.consecutive_passes_in_top_bucket).toBe(1);
+  });
+
+  it('demote: clears permanent_at, stamps today, resets pass counter, keeps bucket', () => {
+    const out = togglePermanent(
+      makeState({
+        permanent_at: '2026-01-01T00:00:00Z',
+        bucket_index: 3,
+        consecutive_passes_in_top_bucket: 3,
+      }),
+      BASE,
+    );
+    expect(out.permanent_at).toBeNull();
+    expect(out.last_tested_on).toBe(BASE);
+    expect(out.consecutive_passes_in_top_bucket).toBe(0);
+    expect(out.bucket_index).toBe(3);
+  });
+
+  it('round-trips: promote → demote leaves a non-permanent grid card', () => {
+    const out = togglePermanent(togglePermanent(makeState(), BASE), BASE);
+    expect(out.permanent_at).toBeNull();
+    expect(out.last_tested_on).toBe(BASE);
   });
 });

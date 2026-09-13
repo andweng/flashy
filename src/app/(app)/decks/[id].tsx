@@ -18,6 +18,7 @@ import {
   initialLastTested,
   isDueToday,
   parseIntervalsList,
+  togglePermanent,
 } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
@@ -302,6 +303,21 @@ export default function DeckDetailScreen() {
     // queue); if not, force it due now (null).
     const currentlyDue = isDueToday(existing, deck.bucket_intervals_days, cycleDay, realToday);
     const newState: CardState = { ...existing, last_tested_on: currentlyDue ? realToday : null };
+    await db.upsertCardState(newState);
+    setCardStates((m) => {
+      const next = new Map(m);
+      next.set(cardId, newState);
+      return next;
+    });
+  }
+
+  // Manually move a card into / back out of the permanent pool (reversible).
+  async function togglePermanentCard(cardId: string) {
+    if (!currentChild || !deck) return;
+    const existing = cardStates.get(cardId);
+    if (!existing) return;
+    const realToday = getEffectiveToday(scheduleTz);
+    const newState = togglePermanent(existing, realToday);
     await db.upsertCardState(newState);
     setCardStates((m) => {
       const next = new Map(m);
@@ -855,6 +871,18 @@ export default function DeckDetailScreen() {
                         style={styles.bucketChip}>
                         <ThemedText type="small">
                           Bucket {bucketLetter(cardStates.get(card.id)!.bucket_index)}
+                        </ThemedText>
+                      </Pressable>
+                    )}
+                    {currentChild && cardStates.has(card.id) && (
+                      <Pressable
+                        onPress={() => togglePermanentCard(card.id)}
+                        style={[
+                          styles.dueChip,
+                          cardStates.get(card.id)!.permanent_at && styles.dueChipActive,
+                        ]}>
+                        <ThemedText type="small">
+                          {cardStates.get(card.id)!.permanent_at ? '🏆 Permanent' : 'Permanent'}
                         </ThemedText>
                       </Pressable>
                     )}
