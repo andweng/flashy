@@ -103,12 +103,16 @@ describe('pickPermanentDraws — basic behavior', () => {
 
 describe('pickPermanentDraws — deprioritization of recent tests', () => {
   it('a card tested today (weight 0) is never drawn while other cards have weight', () => {
-    const pool = makePool(10, 5);
-    pool[0].last_tested_on = BASE; // just tested
+    // Rebuild the pool each day so c0 is genuinely tested *that* day — the
+    // property being asserted. (It also costs one of the day's draw slots, so
+    // only 3 of 4 are drawn.)
     for (let d = 0; d < 30; d++) {
       const today = addDays(BASE, d);
+      const pool = makePool(10, 5);
+      pool[0].last_tested_on = today;
       const drawn = pickPermanentDraws(pool, 4, today, 'keeper:child-1');
       expect(drawn.map((c) => c.card_id)).not.toContain('c0');
+      expect(drawn.length).toBe(3);
     }
   });
 
@@ -189,5 +193,61 @@ describe('togglePermanent', () => {
     const out = togglePermanent(togglePermanent(makeState(), BASE), BASE);
     expect(out.permanent_at).toBeNull();
     expect(out.last_tested_on).toBe(BASE);
+  });
+});
+
+// Regression: the day's draw is a fixed budget of y cards, not a rolling refill.
+// Before this, pickPermanentDraws sampled y cards from whatever was still
+// eligible on every call, so completing today's set immediately drew y *fresh*
+// cards — the due count never fell below y, and the whole pool got re-tested
+// every single day instead of y of it.
+describe('pickPermanentDraws — the daily budget is y, not a refill', () => {
+  it('completing the day\'s draws leaves nothing due (no backfill from the rest of the pool)', () => {
+    const pool = makePool(20, 5);
+    const first = pickPermanentDraws(pool, 8, BASE, `keeper:child-1:${BASE}`);
+    expect(first.length).toBe(8);
+    first.forEach((c) => {
+      c.last_tested_on = BASE; // reviewed today
+    });
+    expect(pickPermanentDraws(pool, 8, BASE, `keeper:child-1:${BASE}`)).toEqual([]);
+  });
+
+  it('the count falls one at a time as cards are reviewed', () => {
+    const pool = makePool(20, 5);
+    const drawn = pickPermanentDraws(pool, 8, BASE, `keeper:child-1:${BASE}`);
+    for (let done = 1; done <= 8; done++) {
+      drawn[done - 1].last_tested_on = BASE;
+      expect(pickPermanentDraws(pool, 8, BASE, `keeper:child-1:${BASE}`).length).toBe(8 - done);
+    }
+  });
+
+  it('the rest of the day\'s set is unchanged when one card is reviewed', () => {
+    const pool = makePool(20, 5);
+    const drawn = pickPermanentDraws(pool, 8, BASE, `keeper:child-1:${BASE}`);
+    const reviewed = drawn[3];
+    reviewed.last_tested_on = BASE;
+    const still = pickPermanentDraws(pool, 8, BASE, `keeper:child-1:${BASE}`);
+    expect(new Set(still.map((c) => c.card_id))).toEqual(
+      new Set(drawn.filter((c) => c !== reviewed).map((c) => c.card_id)),
+    );
+  });
+
+  it('tests only y cards per day even when the child keeps reviewing all day', () => {
+    const pool = makePool(20, 5);
+    for (let d = 0; d < 5; d++) {
+      const today = addDays(BASE, d);
+      const tested = new Set<string>();
+      // Keep asking for the day's draws and reviewing them, as the app does on
+      // every home/review load, until the day is genuinely done.
+      for (let guard = 0; guard < 10; guard++) {
+        const drawn = pickPermanentDraws(pool, 8, today, `keeper:child-1:${today}`);
+        if (drawn.length === 0) break;
+        drawn.forEach((c) => {
+          tested.add(c.card_id);
+          c.last_tested_on = today;
+        });
+      }
+      expect(tested.size).toBe(8);
+    }
   });
 });

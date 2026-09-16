@@ -241,12 +241,15 @@ export function togglePermanent(state: CardState, today: string): CardState {
 //
 // - Weight = (days since last test)². A card tested today has weight 0 and is
 //   impossible to redraw that day; the stalest cards dominate the draw.
+// - y is a DAILY BUDGET, not a queue length: a card tested today has spent one of
+//   today's slots, so it drops off the list without another card taking its place.
+//   That is what makes the due count fall to 0 as the set is completed, and what
+//   keeps the pool rotating across days instead of being drained every day.
 // - Draw size = min(y, pool): small pools get fully tested ("test all eligible").
 // - No stored picks and no stored weight — everything derives from last_tested_on,
 //   consistent with the derive-don't-store model above.
 // - Deterministic per (childId, today) via a seeded PRNG: the same picks all day
-//   (stable across refreshes), different picks tomorrow. A mid-day reset drops
-//   reviewed cards' weights, so a re-drawn queue naturally differs.
+//   (stable across refreshes), different picks tomorrow.
 
 // FNV-1a 32-bit string hash → uint32 seed material.
 export function hashSeed(s: string): number {
@@ -282,17 +285,29 @@ export function permanentWeight(lastTestedOn: string | null, today: string): num
 }
 
 export type PermanentDrawCandidate = {
+  card_id: string;
   permanent_at: string | null;
   last_tested_on: string | null;
 };
 
-// Weighted sampling without replacement, seeded deterministically by `seedStr`
-// (pass something like `keeper:${childId}:${today}`): same eligible set + y +
-// today + seed → same picks, every call. Returns min(y, eligible) cards, where
-// eligible = cards not tested today (weight > 0). Reviewing a card stamps it
-// tested-today, so it drops off the day's draw and the due count falls to 0 as
-// you complete the set — like a grid-due card. A pool with fewer eligible cards
-// than y is fully drawn ("test all eligible").
+// Per-card draw key (Efraimidis–Spirakis): ln(u)/weight, where u is a uniform
+// drawn from a PRNG seeded by (day seed, card). Taking the top-k keys is exactly
+// weighted sampling without replacement — but unlike a sequential draw, each
+// card's key depends ONLY on itself, so reviewing one card leaves every other
+// card's key untouched and the rest of the day's set intact.
+function drawKey(cardId: string, weight: number, seedStr: string): number {
+  return Math.log(mulberry32(hashSeed(`${seedStr}:${cardId}`))()) / weight;
+}
+
+// Today's outstanding permanent draws, seeded deterministically by `seedStr`
+// (pass something like `keeper:${childId}:${today}`): same pool + y + today +
+// seed → same picks, every call.
+//
+// y is the day's budget. Cards already tested today have used a slot (drawn and
+// reviewed, freshly graduated, or just toggled into the pool), so they are both
+// excluded from the result AND counted against y — the list shrinks one card at
+// a time as the child works through it and hits 0 when the budget is spent,
+// instead of refilling itself from the rest of the pool.
 export function pickPermanentDraws<T extends PermanentDrawCandidate>(
   pool: T[],
   y: number,
@@ -300,34 +315,17 @@ export function pickPermanentDraws<T extends PermanentDrawCandidate>(
   seedStr: string,
 ): T[] {
   if (y <= 0 || pool.length === 0) return [];
-  const rand = mulberry32(hashSeed(seedStr));
-  // Eligible = not tested today. This is what makes a reviewed permanent card drop
-  // off today's draw (weight 0 ⇒ tested today) instead of the whole pool being
-  // re-drawn, so the due count falls to 0 as you complete the set.
-  const remaining = pool.filter((c) => permanentWeight(c.last_tested_on, today) > 0);
-  const out: T[] = [];
-  const count = Math.min(y, remaining.length);
-  for (let i = 0; i < count; i++) {
-    const weights = remaining.map((c) => permanentWeight(c.last_tested_on, today));
-    const total = weights.reduce((a, b) => a + b, 0);
-    let idx: number;
-    if (total <= 0) {
-      idx = Math.floor(rand() * remaining.length);
-    } else {
-      let r = rand() * total;
-      idx = remaining.length - 1;
-      for (let j = 0; j < remaining.length; j++) {
-        r -= weights[j];
-        if (r < 0) {
-          idx = j;
-          break;
-        }
-      }
-    }
-    out.push(remaining[idx]);
-    remaining.splice(idx, 1);
-  }
-  return out;
+  const eligible = pool
+    .map((c) => ({ c, weight: permanentWeight(c.last_tested_on, today) }))
+    .filter((e) => e.weight > 0);
+  // Everything else in the pool was tested today and has spent a slot.
+  const slots = Math.min(y - (pool.length - eligible.length), eligible.length);
+  if (slots <= 0) return [];
+  return eligible
+    .map((e) => ({ c: e.c, key: drawKey(e.c.card_id, e.weight, seedStr) }))
+    .sort((a, b) => b.key - a.key)
+    .slice(0, slots)
+    .map((e) => e.c);
 }
 
 // Normalize typed input for auto-checking (case + whitespace + simple punctuation).
