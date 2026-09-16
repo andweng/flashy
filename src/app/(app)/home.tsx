@@ -1,5 +1,5 @@
-import { Link } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Link, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -17,30 +17,40 @@ export default function HomeScreen() {
   const [totalDue, setTotalDue] = useState<number | null>(null);
   const [perDeck, setPerDeck] = useState<DeckSummary[]>([]);
 
-  useEffect(() => {
-    if (!child) return;
-    void (async () => {
-      const parent = await db.getCurrentParent();
-      const today = getEffectiveToday(parent?.timezone ?? 'UTC');
-      const [due, keepers] = await Promise.all([
-        db.listDueCardStatesForChild(child.id, today),
-        db.listPermanentDrawsForChild(child.id, today),
-      ]);
+  // Refetch on focus, not just on mount: returning from a review (back arrow or
+  // "Back home") must show the counts the session just changed, and the review
+  // screen is popped, not remounted, so a mount-only effect would go stale.
+  useFocusEffect(
+    useCallback(() => {
+      if (!child) return;
+      let cancelled = false;
+      void (async () => {
+        const parent = await db.getCurrentParent();
+        const today = getEffectiveToday(parent?.timezone ?? 'UTC');
+        const [due, keepers] = await Promise.all([
+          db.listDueCardStatesForChild(child.id, today),
+          db.listPermanentDrawsForChild(child.id, today),
+        ]);
+        if (cancelled) return;
 
-      // The due list returns one row per due card (no backlog stacking) and the
-      // permanent lottery up to one row per keeper, so each row contributes
-      // exactly one to its deck's count.
-      const byDeck = new Map<string, DeckSummary>();
-      for (const s of [...due, ...keepers]) {
-        const existing = byDeck.get(s.deck.id);
-        if (existing) existing.due += 1;
-        else byDeck.set(s.deck.id, { id: s.deck.id, name: s.deck.name, due: 1 });
-      }
-      const list = [...byDeck.values()].sort((a, b) => b.due - a.due);
-      setPerDeck(list);
-      setTotalDue(list.reduce((sum, d) => sum + d.due, 0));
-    })();
-  }, [child]);
+        // The due list returns one row per due card (no backlog stacking) and the
+        // permanent lottery up to one row per keeper, so each row contributes
+        // exactly one to its deck's count.
+        const byDeck = new Map<string, DeckSummary>();
+        for (const s of [...due, ...keepers]) {
+          const existing = byDeck.get(s.deck.id);
+          if (existing) existing.due += 1;
+          else byDeck.set(s.deck.id, { id: s.deck.id, name: s.deck.name, due: 1 });
+        }
+        const list = [...byDeck.values()].sort((a, b) => b.due - a.due);
+        setPerDeck(list);
+        setTotalDue(list.reduce((sum, d) => sum + d.due, 0));
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [child]),
+  );
 
   if (!child) return null;
 
