@@ -148,7 +148,6 @@ export default function SettingsScreen() {
           bucket_index: item.bucket_index,
           last_tested_on: item.last_tested_on,
           consecutive_passes_in_top_bucket: item.consecutive_passes_in_top_bucket,
-          permanent_at: item.permanent_at,
           last_reviewed_at: item.last_reviewed_at,
         };
         // Treat each due card as one passed review: promote its bucket and stamp
@@ -163,7 +162,6 @@ export default function SettingsScreen() {
           bucket_before: state.bucket_index,
           bucket_after: update.next_state.bucket_index,
           user_input: null,
-          was_permanent_before: !!state.permanent_at,
         });
       }
       setDoneFeedback(

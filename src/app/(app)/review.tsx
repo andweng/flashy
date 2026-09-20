@@ -17,7 +17,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
-import { applyReview, bucketLetter, checkTypedAnswer } from '@/lib/leitner';
+import { applyReview, bucketLabel, checkTypedAnswer } from '@/lib/leitner';
 import {
   clearReviewSession,
   loadReviewSession,
@@ -30,7 +30,8 @@ type QueueItem = {
   state: CardState;
   card: Card;
   deck: Deck;
-  // Permanent-pool (lottery) draw; such cards trail the grid-due queue.
+  // Came from the permanent-bucket lottery rather than the grid; such cards
+  // trail the grid-due queue. The badge reads the bucket itself.
   isPermanent?: boolean;
 };
 
@@ -186,9 +187,6 @@ export default function ReviewScreen() {
       bucket_before: item.state.bucket_index,
       bucket_after: update.next_state.bucket_index,
       user_input: input,
-      // Lets "reset today" undo fresh graduations while preserving cards that
-      // were already permanent this morning.
-      was_permanent_before: !!item.state.permanent_at,
     });
 
     const nextPasses = outcome === 'pass' ? passes + 1 : passes;
@@ -255,7 +253,7 @@ export default function ReviewScreen() {
 
         <ThemedText themeColor="textSecondary" type="small" style={styles.meta}>
           {current.deck.name} ·{' '}
-          {current.isPermanent ? '🏆 Permanent' : `Bucket ${bucketLetter(current.state.bucket_index)}`}
+          {bucketLabel(current.state.bucket_index, current.deck.bucket_intervals_days)}
         </ThemedText>
 
         <ThemedView type="backgroundElement" style={styles.cardArea}>

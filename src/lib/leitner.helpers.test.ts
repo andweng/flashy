@@ -132,11 +132,11 @@ describe('dueDateForCycleDay', () => {
 describe('dueGroupsForDeckOnDay', () => {
   const today = '2026-07-08';
   const states = [
-    { bucket_index: 0, permanent_at: null },
-    { bucket_index: 0, permanent_at: null },
-    { bucket_index: 1, permanent_at: null },
-    { bucket_index: 2, permanent_at: null },
-    { bucket_index: 2, permanent_at: '2026-07-01T00:00:00Z' }, // graduated → excluded
+    { bucket_index: 0 },
+    { bucket_index: 0 },
+    { bucket_index: 1 },
+    { bucket_index: 2 },
+    { bucket_index: IV.length }, // the permanent bucket → off the grid, excluded
   ];
 
   it('day 0: only bucket A is due; B and C are scheduled but not yet due', () => {

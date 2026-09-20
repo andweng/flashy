@@ -5,12 +5,16 @@
 
 import {
   addDays,
+  bucketIndexes,
+  bucketLabel,
+  isPermanentBucket,
+  permanentBucketIndex,
   DEFAULT_BUCKET_INTERVALS,
   isDueToday,
   permanentCooldownDays,
   pickPermanentDraws,
   permanentWeight,
-  togglePermanent,
+  reBucket,
 } from '@/lib/leitner';
 import type { PermanentDrawCandidate } from '@/lib/leitner';
 import type { CardState } from '@/types/domain';
@@ -22,7 +26,6 @@ type PoolCard = PermanentDrawCandidate & { card_id: string };
 function makePool(size: number, lastTestedDaysAgo: number | null): PoolCard[] {
   return Array.from({ length: size }, (_, i) => ({
     card_id: `c${i}`,
-    permanent_at: '2026-01-01T00:00:00Z',
     last_tested_on: lastTestedDaysAgo == null ? null : addDays(BASE, -lastTestedDaysAgo),
   }));
 }
@@ -91,7 +94,7 @@ describe('pickPermanentDraws — the cooldown', () => {
     // makes it the only one past the cooldown, so it is the pick. Under a fixed
     // floor weight it would instead sit below every dated card, forever.
     const pool = makePool(12, 6);
-    pool.push({ card_id: 'reset', permanent_at: '2026-01-01T00:00:00Z', last_tested_on: null });
+    pool.push({ card_id: 'reset', last_tested_on: null });
     const drawn = pickPermanentDraws(pool, 1, BASE, `keeper:child-1:${BASE}`);
     expect(drawn.map((c) => c.card_id)).toEqual(['reset']);
   });
@@ -202,47 +205,48 @@ function makeState(overrides: Partial<CardState> = {}): CardState {
     bucket_index: 0,
     last_tested_on: addDays(BASE, -3),
     consecutive_passes_in_top_bucket: 0,
-    permanent_at: null,
     last_reviewed_at: null,
     ...overrides,
   };
 }
 
-describe('togglePermanent', () => {
-  const intervals = DEFAULT_BUCKET_INTERVALS;
+describe('reBucket — permanent is just the last bucket', () => {
+  const intervals = DEFAULT_BUCKET_INTERVALS; // 5 intervals ⇒ permanent is index 5
+  const PERM = permanentBucketIndex(intervals);
 
-  it('promote: sets permanent_at, stamps last_tested_on = today, becomes non-due', () => {
-    const out = togglePermanent(makeState(), BASE);
-    expect(out.permanent_at).not.toBeNull();
-    expect(out.last_tested_on).toBe(BASE);
+  it('into permanent: stamps last_tested_on = today, becomes non-due', () => {
+    const out = reBucket(makeState(), PERM, BASE);
+    expect(out.bucket_index).toBe(PERM);
+    expect(out.last_tested_on).toBe(BASE); // weight 0 today: not drawn until later
     expect(isDueToday(out, intervals, 5, BASE)).toBe(false);
   });
 
-  it('promote: preserves bucket + pass counter (manual override from any bucket)', () => {
-    const out = togglePermanent(makeState({ bucket_index: 2, consecutive_passes_in_top_bucket: 1 }), BASE);
-    expect(out.bucket_index).toBe(2);
-    expect(out.consecutive_passes_in_top_bucket).toBe(1);
+  it('permanent can only ever be the last bucket — there is no permanent bucket A', () => {
+    expect(isPermanentBucket(0, intervals)).toBe(false);
+    expect(isPermanentBucket(intervals.length - 1, intervals)).toBe(false);
+    expect(isPermanentBucket(PERM, intervals)).toBe(true);
+    // The pickable buckets are the intervals plus exactly one permanent slot.
+    expect(bucketIndexes(intervals)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
-  it('demote: clears permanent_at, stamps today, resets pass counter, keeps bucket', () => {
-    const out = togglePermanent(
-      makeState({
-        permanent_at: '2026-01-01T00:00:00Z',
-        bucket_index: 3,
-        consecutive_passes_in_top_bucket: 3,
-      }),
-      BASE,
-    );
-    expect(out.permanent_at).toBeNull();
-    expect(out.last_tested_on).toBe(BASE);
+  it('out of permanent: back onto the grid, pass counter reset so mastery is re-earned', () => {
+    const out = reBucket(makeState({ bucket_index: PERM, consecutive_passes_in_top_bucket: 7 }), 0, BASE);
+    expect(out.bucket_index).toBe(0);
     expect(out.consecutive_passes_in_top_bucket).toBe(0);
-    expect(out.bucket_index).toBe(3);
+    expect(out.last_tested_on).toBeNull(); // bucket A: due immediately
+    expect(isDueToday(out, intervals, 5, BASE)).toBe(true);
   });
 
-  it('round-trips: promote → demote leaves a non-permanent grid card', () => {
-    const out = togglePermanent(togglePermanent(makeState(), BASE), BASE);
-    expect(out.permanent_at).toBeNull();
-    expect(out.last_tested_on).toBe(BASE);
+  it('round-trips: into permanent → back out leaves an ordinary grid card', () => {
+    const out = reBucket(reBucket(makeState(), PERM, BASE), 2, BASE);
+    expect(isPermanentBucket(out.bucket_index, intervals)).toBe(false);
+    expect(out.bucket_index).toBe(2);
+  });
+
+  it('labels the permanent bucket by name, the rest by letter', () => {
+    expect(bucketLabel(0, intervals)).toBe('Bucket A');
+    expect(bucketLabel(4, intervals)).toBe('Bucket E');
+    expect(bucketLabel(PERM, intervals)).toBe('🏆 Permanent');
   });
 });
 
