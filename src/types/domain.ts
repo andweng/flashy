@@ -12,10 +12,10 @@ export type Child = {
   display_name: string;
   avatar: string | null;
   // Mastery threshold: after this many consecutive top-bucket passes a card
-  // graduates into the permanent pool (null = never graduate, cards cycle
-  // forever in the top bucket).
+  // graduates into the deck's permanent bucket (null = never graduate, cards
+  // cycle forever in the top interval bucket).
   graduate_after_passes: number | null;
-  // Daily permanent-pool lottery size: up to this many permanent cards are
+  // Daily permanent-bucket lottery size: up to this many permanent cards are
   // drawn for review each day (weighted by days since last test; see
   // pickPermanentDraws in leitner.ts). 0 = never re-test permanent cards
   // (effectively retired).
@@ -56,17 +56,15 @@ export type Card = {
 export type CardState = {
   child_id: string;
   card_id: string;
+  // Which bucket the card sits in. The last index (= the deck's interval count)
+  // is the permanent bucket — off the grid, re-tested by the daily lottery. See
+  // "the permanent bucket" in leitner.ts.
   bucket_index: number;
   // Scheduling anchor (see leitner.ts "last_tested_on model"). Due-ness is derived
   // from this + bucket + the deck's cycle start; there is no stored due date.
   // null ⇒ "force due now" (a fresh bucket-0 card, or a card cleared by a reset).
   last_tested_on: string | null;
   consecutive_passes_in_top_bucket: number;
-  // Set (ISO timestamp) when the card graduates into the permanent pool after
-  // `graduate_after_passes` top-bucket passes. Permanent cards leave the bucket
-  // grid and are re-tested by the daily weighted lottery instead; failing one
-  // (or a reset of today's fresh graduations) clears it. null = not permanent.
-  permanent_at: string | null;
   last_reviewed_at: string | null;
 };
 
@@ -81,8 +79,4 @@ export type Review = {
   bucket_before: number;
   bucket_after: number;
   user_input: string | null;
-  // Was the card already permanent (in the permanent pool) before this review?
-  // Lets "reset today" undo fresh graduations while preserving established
-  // permanent cards.
-  was_permanent_before: boolean;
 };

@@ -3,7 +3,7 @@
 // graduation, and start-date repositioning. Each test builds isolated entities
 // (fresh ids) so the shared in-memory fixtures don't interfere.
 
-import { addDays } from '@/lib/leitner';
+import { addDays, applyReview, todayInTz } from '@/lib/leitner';
 import { mockDB } from './mock';
 import type { CardState } from '@/types/domain';
 
@@ -48,7 +48,6 @@ function stateFor(childId: string, cardId: string, patch: Partial<CardState>): C
     bucket_index: 0,
     last_tested_on: null,
     consecutive_passes_in_top_bucket: 0,
-    permanent_at: null,
     last_reviewed_at: null,
     ...patch,
   };
@@ -70,10 +69,10 @@ describe('mockDB due-listing (last_tested_on model)', () => {
     expect(due.map((d) => d.card_id)).not.toContain(cards[0].id);
   });
 
-  it('graduated cards are excluded', async () => {
+  it('cards in the permanent bucket are excluded', async () => {
     const { child, cards } = await setupAssignedDeck([1, 2, 4], ['a', 'b']);
     await mockDB.upsertCardState(
-      stateFor(child.id, cards[0].id, { permanent_at: '2026-07-01T00:00:00Z' }),
+      stateFor(child.id, cards[0].id, { bucket_index: 3 }), // 3 intervals ⇒ permanent
     );
     expect((await mockDB.listDueCardStatesForChild(child.id, TODAY)).length).toBe(1);
   });
@@ -111,7 +110,6 @@ describe('mockDB due-listing (last_tested_on model)', () => {
       bucket_before: 0,
       bucket_after: 1,
       user_input: null,
-      was_permanent_before: false,
     });
     await mockDB.upsertCardState(
       stateFor(child.id, cards[0].id, { bucket_index: 1, last_tested_on: TODAY }),
@@ -254,13 +252,12 @@ describe('mockDB permanent-pool draws (daily weighted lottery)', () => {
     for (const c of cards) {
       await mockDB.upsertCardState(
         stateFor(child.id, c.id, {
-          bucket_index: 2,
-          permanent_at: '2026-07-01T00:00:00Z',
+          bucket_index: 3, // 3 intervals ⇒ permanent
           last_tested_on: addDays(TODAY, -5),
         }),
       );
     }
-    expect(await mockDB.listPermanentDrawsForChild(child.id, TODAY)).toEqual([]);
+    expect(await mockDB.listPermanentDrawsForChild(child.id, TODAY, 'UTC')).toEqual([]);
   });
 
   it('draws up to y permanent cards, excludes non-permanent ones, stable for the day', async () => {
@@ -293,20 +290,19 @@ describe('mockDB permanent-pool draws (daily weighted lottery)', () => {
     for (let i = 0; i < 5; i++) {
       await mockDB.upsertCardState(
         stateFor(child.id, cards[i], {
-          bucket_index: 2,
-          // 3 permanent, 2 still in the grid.
-          permanent_at: i < 3 ? '2026-07-01T00:00:00Z' : null,
+          // 3 permanent (index 3 = one past the deck's 3 intervals), 2 in the grid.
+          bucket_index: i < 3 ? 3 : 2,
           last_tested_on: addDays(TODAY, -(i + 1)),
         }),
       );
     }
-    const drawn = await mockDB.listPermanentDrawsForChild(child.id, TODAY);
+    const drawn = await mockDB.listPermanentDrawsForChild(child.id, TODAY, 'UTC');
     expect(drawn.length).toBe(2);
-    expect(drawn.every((r) => r.permanent_at)).toBe(true);
+    expect(drawn.every((r) => r.bucket_index === 3)).toBe(true);
     // Grid cards are excluded from the lottery entirely.
     expect(drawn.every((r) => cards.indexOf(r.card_id) < 3)).toBe(true);
     // Day-stable: calling again (e.g. a refresh) yields the same picks.
-    const again = await mockDB.listPermanentDrawsForChild(child.id, TODAY);
+    const again = await mockDB.listPermanentDrawsForChild(child.id, TODAY, 'UTC');
     expect(again.map((r) => r.card_id)).toEqual(drawn.map((r) => r.card_id));
   });
 
@@ -315,52 +311,42 @@ describe('mockDB permanent-pool draws (daily weighted lottery)', () => {
     await mockDB.updateChild(child.id, { permanent_draws_per_day: 3 });
     await mockDB.upsertCardState(
       stateFor(child.id, cards[0].id, {
-        bucket_index: 2,
-        permanent_at: '2026-07-01T00:00:00Z',
+        bucket_index: 3, // 3 intervals ⇒ permanent
         last_tested_on: addDays(TODAY, -5),
       }),
     );
-    expect((await mockDB.listPermanentDrawsForChild(child.id, TODAY)).length).toBe(1);
+    expect((await mockDB.listPermanentDrawsForChild(child.id, TODAY, 'UTC')).length).toBe(1);
     await mockDB.unassignDeckFromChild(deck.id, child.id);
-    expect(await mockDB.listPermanentDrawsForChild(child.id, TODAY)).toEqual([]);
+    expect(await mockDB.listPermanentDrawsForChild(child.id, TODAY, 'UTC')).toEqual([]);
   });
 
   it('reset preserves established permanence but undoes today\'s fresh graduations', async () => {
+    // Deck has 3 intervals, so bucket 2 is the top interval and 3 is permanent.
+    // Restoring bucket_before is all the reset has to do — permanence rides along.
     const { child, cards } = await setupAssignedDeck([1, 2, 4], ['a', 'b']);
     // Card 0: permanent since last week, re-tested via the lottery this morning.
-    const oldStamp = '2026-07-01T00:00:00Z';
     await mockDB.recordReview({
       child_id: child.id,
       card_id: cards[0].id,
       outcome: 'pass',
-      bucket_before: 2,
-      bucket_after: 2,
+      bucket_before: 3,
+      bucket_after: 3,
       user_input: null,
-      was_permanent_before: true,
     });
     await mockDB.upsertCardState(
-      stateFor(child.id, cards[0].id, {
-        bucket_index: 2,
-        permanent_at: oldStamp,
-        last_tested_on: TODAY,
-      }),
+      stateFor(child.id, cards[0].id, { bucket_index: 3, last_tested_on: TODAY }),
     );
-    // Card 1: graduated into the pool for the first time today.
+    // Card 1: graduated out of the top interval bucket for the first time today.
     await mockDB.recordReview({
       child_id: child.id,
       card_id: cards[1].id,
       outcome: 'pass',
       bucket_before: 2,
-      bucket_after: 2,
+      bucket_after: 3,
       user_input: null,
-      was_permanent_before: false,
     });
     await mockDB.upsertCardState(
-      stateFor(child.id, cards[1].id, {
-        bucket_index: 2,
-        permanent_at: '2026-07-08T09:00:00.000Z',
-        last_tested_on: TODAY,
-      }),
+      stateFor(child.id, cards[1].id, { bucket_index: 3, last_tested_on: TODAY }),
     );
 
     const n = await mockDB.resetTodaysReviewsForChild(child.id, TODAY, 'UTC');
@@ -368,7 +354,53 @@ describe('mockDB permanent-pool draws (daily weighted lottery)', () => {
     const [s0, s1] = (await mockDB.listCardStatesForChild(child.id)).filter(
       (s) => s.card_id === cards[0].id || s.card_id === cards[1].id,
     );
-    expect(s0.permanent_at).toBe(oldStamp); // still permanent, original stamp kept
-    expect(s1.permanent_at).toBeNull(); // fresh graduation undone
+    expect(s0.bucket_index).toBe(3); // still permanent
+    expect(s1.bucket_index).toBe(2); // fresh graduation undone
+  });
+
+  // Evan's shape: a 13-card permanent pool, 6 draws/day, every answer wrong.
+  // A miss drops the card to bucket 0, which used to take it out of the pool and
+  // refund its draw slot — draining the whole pool in a single day.
+  it('a missed permanent card still spends its slot', async () => {
+    const today = todayInTz('UTC');
+    const child = await mockDB.createChild({
+      parent_id: 'p1', display_name: 'Leak', avatar: null,
+      graduate_after_passes: 3, permanent_draws_per_day: 6,
+    });
+    const deck = await mockDB.createDeck({
+      parent_id: 'p1', name: 'Leak deck', description: null, bucket_intervals_days: [1, 2, 4, 8, 16],
+    });
+    for (let i = 0; i < 13; i++) {
+      await mockDB.createCard({
+        deck_id: deck.id, front: `f${i}`, back: `b${i}`,
+        grading_mode: 'self_grade', typed_alternates: [], choices: [],
+      });
+    }
+    await mockDB.assignDeckToChild(deck.id, child.id);
+    const states = await mockDB.listCardStatesForChild(child.id);
+    for (const [i, s] of states.entries()) {
+      await mockDB.upsertCardState({
+        ...s, bucket_index: 5, // 5 intervals ⇒ permanent
+        consecutive_passes_in_top_bucket: 3, last_tested_on: addDays(today, -(2 + i)),
+      });
+    }
+
+    let answered = 0;
+    for (let round = 0; round < 6; round++) {
+      const drawn = await mockDB.listPermanentDrawsForChild(child.id, today, 'UTC');
+      if (drawn.length === 0) break;
+      for (const d of drawn) {
+        const { card, deck: dk, ...state } = d;
+        const update = applyReview(state, dk, child, today, { kind: 'fail' });
+        await mockDB.upsertCardState(update.next_state);
+        await mockDB.recordReview({
+          child_id: child.id, card_id: card.id, outcome: 'fail',
+          bucket_before: state.bucket_index, bucket_after: update.next_state.bucket_index,
+          user_input: null,
+        });
+        answered++;
+      }
+    }
+    expect(answered).toBe(6); // was 13 before the fix
   });
 });

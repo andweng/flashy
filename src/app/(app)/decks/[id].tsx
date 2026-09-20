@@ -17,7 +17,9 @@ import {
   dueGroupsForDeckOnDay,
   initialLastTested,
   parseIntervalsList,
-  togglePermanent,
+  bucketIndexes,
+  bucketLabel,
+  permanentBucketIndex,
 } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
@@ -143,7 +145,6 @@ export default function DeckDetailScreen() {
           // natural schedule (bucket 0 due now, higher buckets at their next slot).
           last_tested_on: addDueToday ? null : initialLastTested(realToday, addBucket),
           consecutive_passes_in_top_bucket: 0,
-          permanent_at: null,
           last_reviewed_at: null,
         });
       }
@@ -223,14 +224,22 @@ export default function DeckDetailScreen() {
   function bucketRemovalMessage(newLen: number): string {
     if (!deck) return '';
     const oldLen = deck.bucket_intervals_days.length;
-    const removed = Array.from({ length: oldLen - newLen }, (_, k) => bucketLetter(newLen + k)).join(', ');
+    const removed = Array.from({ length: oldLen - newLen }, (_, k) =>
+      bucketLetter(newLen + k),
+    ).join(', ');
     const top = bucketLetter(newLen - 1);
     if (!currentChild) {
       return `Removing ${removed} — cards in removed buckets will move to bucket ${top}.`;
     }
-    const n = cards.filter((c) => (cardStates.get(c.id)?.bucket_index ?? -1) >= newLen).length;
+    // Permanent cards sit at the OLD permanent index and ride the change — they
+    // stay permanent, so they are not part of the move.
+    const permanent = permanentBucketIndex(deck.bucket_intervals_days);
+    const n = cards.filter((c) => {
+      const b = cardStates.get(c.id)?.bucket_index ?? -1;
+      return b >= newLen && b < permanent;
+    }).length;
     if (n === 0) return `Removing ${removed} — no cards sit in the removed buckets.`;
-    return `Removing ${removed} — ${n} of ${currentChild.display_name}'s cards will move to bucket ${top}.`;
+    return `Removing ${removed} — ${n} of ${currentChild.display_name}'s cards will move to bucket ${top}. 🏆 Permanent cards stay permanent.`;
   }
 
   async function saveEditDeck() {
@@ -268,10 +277,12 @@ export default function DeckDetailScreen() {
     }
   }
 
+  // Every bucket change goes through here, permanent included — it is just the
+  // last index, so there is no separate toggle and no second way to say it.
   async function setBucket(cardId: string, bucketIndex: number) {
     if (!currentChild || !deck) return;
     const existing = cardStates.get(cardId);
-    const realToday = getEffectiveToday('UTC');
+    const realToday = getEffectiveToday(scheduleTz);
     const newState: CardState = {
       child_id: currentChild.id,
       card_id: cardId,
@@ -279,7 +290,6 @@ export default function DeckDetailScreen() {
       // Re-bucketing puts the card on its natural schedule for the new bucket.
       last_tested_on: initialLastTested(realToday, bucketIndex),
       consecutive_passes_in_top_bucket: 0,
-      permanent_at: null,
       last_reviewed_at: existing?.last_reviewed_at ?? null,
     };
     await db.upsertCardState(newState);
@@ -289,21 +299,6 @@ export default function DeckDetailScreen() {
       return next;
     });
     setBucketPickerCardId(null);
-  }
-
-  // Manually move a card into / back out of the permanent pool (reversible).
-  async function togglePermanentCard(cardId: string) {
-    if (!currentChild || !deck) return;
-    const existing = cardStates.get(cardId);
-    if (!existing) return;
-    const realToday = getEffectiveToday(scheduleTz);
-    const newState = togglePermanent(existing, realToday);
-    await db.upsertCardState(newState);
-    setCardStates((m) => {
-      const next = new Map(m);
-      next.set(cardId, newState);
-      return next;
-    });
   }
 
   async function toggleAssign(childId: string, currentlyAssigned: boolean) {
@@ -435,13 +430,17 @@ export default function DeckDetailScreen() {
   // when a child is selected (bucket state is per-child).
   const bucketBreakdown =
     currentChild && cardStates.size > 0
-      ? deck.bucket_intervals_days
-          .map((_, i) => ({
+      ? bucketIndexes(deck.bucket_intervals_days)
+          .map((i) => ({
             i,
             n: cards.filter((c) => cardStates.get(c.id)?.bucket_index === i).length,
           }))
           .filter(({ n }) => n > 0)
-          .map(({ i, n }) => `${n} ${bucketLetter(i)}`)
+          .map(({ i, n }) =>
+            i === permanentBucketIndex(deck.bucket_intervals_days)
+              ? `${n} 🏆`
+              : `${n} ${bucketLetter(i)}`,
+          )
           .join(', ')
       : '';
 
@@ -452,9 +451,9 @@ export default function DeckDetailScreen() {
   );
   const availableGroups =
     currentChild && cardStates.size > 0
-      ? deck.bucket_intervals_days
-          .map((_, i) => i)
-          .filter((i) => cards.some((c) => cardStates.get(c.id)?.bucket_index === i))
+      ? bucketIndexes(deck.bucket_intervals_days).filter((i) =>
+          cards.some((c) => cardStates.get(c.id)?.bucket_index === i),
+        )
       : [];
   const visibleCards =
     groupFilter == null
@@ -723,7 +722,9 @@ export default function DeckDetailScreen() {
                 onPress={() => setGroupFilterOpen((v) => !v)}>
                 <ThemedText type="small">
                   Filter:{' '}
-                  {groupFilter == null ? 'All groups' : `Group ${bucketLetter(groupFilter)}`}
+                  {groupFilter == null
+                    ? 'All groups'
+                    : bucketLabel(groupFilter, deck.bucket_intervals_days)}
                 </ThemedText>
                 <ThemedText themeColor="textSecondary">{groupFilterOpen ? '▾' : '▸'}</ThemedText>
               </Pressable>
@@ -750,7 +751,7 @@ export default function DeckDetailScreen() {
                           setGroupFilterOpen(false);
                         }}>
                         <ThemedText style={groupFilter === i ? styles.filterOptionActive : undefined}>
-                          Group {bucketLetter(i)} ({n})
+                          {bucketLabel(i, deck.bucket_intervals_days)} ({n})
                         </ThemedText>
                       </Pressable>
                     );
@@ -826,26 +827,17 @@ export default function DeckDetailScreen() {
                     </ThemedText>
                   </Pressable>
                   <View style={styles.rowActions}>
-                    {currentChild && cardStates.has(card.id) && (
+                    {currentChild && cardStates.has(card.id) && deck && (
                       <Pressable
                         onPress={() =>
                           setBucketPickerCardId(bucketPickerCardId === card.id ? null : card.id)
                         }
                         style={styles.bucketChip}>
                         <ThemedText type="small">
-                          Bucket {bucketLetter(cardStates.get(card.id)!.bucket_index)}
-                        </ThemedText>
-                      </Pressable>
-                    )}
-                    {currentChild && cardStates.has(card.id) && (
-                      <Pressable
-                        onPress={() => togglePermanentCard(card.id)}
-                        style={[
-                          styles.dueChip,
-                          cardStates.get(card.id)!.permanent_at && styles.dueChipActive,
-                        ]}>
-                        <ThemedText type="small">
-                          {cardStates.get(card.id)!.permanent_at ? '🏆 Permanent' : 'Permanent'}
+                          {bucketLabel(
+                            cardStates.get(card.id)!.bucket_index,
+                            deck.bucket_intervals_days,
+                          )}
                         </ThemedText>
                       </Pressable>
                     )}
@@ -859,14 +851,18 @@ export default function DeckDetailScreen() {
                 </View>
                 {bucketPickerCardId === card.id && deck && (
                   <View style={styles.bucketPickerRow}>
-                    {deck.bucket_intervals_days.map((_, i) => {
+                    {bucketIndexes(deck.bucket_intervals_days).map((i) => {
+                      const permanent = i === permanentBucketIndex(deck.bucket_intervals_days);
                       const active = cardStates.get(card.id)?.bucket_index === i;
                       return (
                         <Pressable
                           key={i}
                           onPress={() => setBucket(card.id, i)}
-                          style={[styles.bucketBtn, active && styles.bucketBtnActive]}>
-                          <ThemedText>{bucketLetter(i)}</ThemedText>
+                          style={[
+                            styles.bucketBtn,
+                            active && styles.bucketBtnActive,
+                          ]}>
+                          <ThemedText>{permanent ? '🏆' : bucketLetter(i)}</ThemedText>
                         </Pressable>
                       );
                     })}

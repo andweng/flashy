@@ -31,7 +31,11 @@ create table children (
   parent_id uuid not null references parents(id) on delete cascade,
   display_name text not null,
   avatar text,
+  -- Mastery threshold: this many consecutive top-interval-bucket passes moves a
+  -- card into the deck's permanent bucket. null = never graduate.
   graduate_after_passes int check (graduate_after_passes is null or graduate_after_passes >= 1),
+  -- Daily permanent-bucket lottery size. 0 = never re-test permanent cards.
+  permanent_draws_per_day int not null default 0 check (permanent_draws_per_day >= 0),
   created_at timestamptz not null default now()
 );
 create index children_parent_idx on children (parent_id);
@@ -77,15 +81,17 @@ create index cards_deck_idx on cards (deck_id);
 create table card_states (
   child_id uuid not null references children(id) on delete cascade,
   card_id uuid not null references cards(id) on delete cascade,
+  -- Index into the deck's buckets. The last index (= cardinality of
+  -- bucket_intervals_days) is the PERMANENT bucket: off the interval grid,
+  -- re-tested by the daily lottery instead. See "the permanent bucket" in
+  -- src/lib/leitner.ts — permanence is this column, not a separate flag.
   bucket_index int not null default 0 check (bucket_index >= 0),
   last_tested_on date,
   consecutive_passes_in_top_bucket int not null default 0,
-  graduated_at timestamptz,
   last_reviewed_at timestamptz,
   primary key (child_id, card_id)
 );
-create index card_states_alive_idx on card_states (child_id)
-    where graduated_at is null;
+create index card_states_child_idx on card_states (child_id);
 
 -- === Reviews ===
 create table reviews (

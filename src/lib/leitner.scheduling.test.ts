@@ -21,6 +21,7 @@ const B = 1;
 const C = 2;
 const D = 3;
 const E = 4;
+const PERM = 5; // permanentBucketIndex(IV) — one past the last interval
 
 function makeDeck(overrides: Partial<Deck> = {}): Deck {
   return {
@@ -52,7 +53,6 @@ function makeState(overrides: Partial<CardState> = {}): CardState {
     bucket_index: A,
     last_tested_on: null,
     consecutive_passes_in_top_bucket: 0,
-    permanent_at: null,
     last_reviewed_at: null,
     ...overrides,
   };
@@ -86,8 +86,8 @@ describe('mostRecentSlot', () => {
 });
 
 describe('isDueToday', () => {
-  it('graduated cards are never due', () => {
-    const s = makeState({ permanent_at: '2026-01-01T00:00:00Z', last_tested_on: null });
+  it('cards in the permanent bucket are never due', () => {
+    const s = makeState({ bucket_index: PERM, last_tested_on: null });
     expect(isDueToday(s, IV, 0, TODAY)).toBe(false);
   });
 
@@ -165,7 +165,6 @@ describe('applyReview', () => {
     expect(next_state.bucket_index).toBe(A);
     expect(next_state.last_tested_on).toBe(TODAY);
     expect(next_state.consecutive_passes_in_top_bucket).toBe(0);
-    expect(next_state.permanent_at).toBeNull();
     expect(next_state.last_reviewed_at).toEqual(expect.any(String));
     expect(enteredPermanent).toBe(false);
   });
@@ -183,7 +182,6 @@ describe('applyReview', () => {
     const { next_state, enteredPermanent } = applyReview(s, deck, child, TODAY, { kind: 'pass' });
     expect(next_state.bucket_index).toBe(E);
     expect(next_state.consecutive_passes_in_top_bucket).toBe(5);
-    expect(next_state.permanent_at).toBeNull();
     expect(enteredPermanent).toBe(false);
   });
 
@@ -199,7 +197,7 @@ describe('applyReview', () => {
     const s = makeState({ bucket_index: E, consecutive_passes_in_top_bucket: 1 });
     const { next_state, enteredPermanent } = applyReview(s, deck, gradChild, TODAY, { kind: 'pass' });
     expect(next_state.consecutive_passes_in_top_bucket).toBe(2);
-    expect(next_state.permanent_at).toEqual(expect.any(String));
+    expect(next_state.bucket_index).toBe(PERM);
     expect(enteredPermanent).toBe(true);
   });
 
@@ -208,28 +206,21 @@ describe('applyReview', () => {
     const s = makeState({ bucket_index: E, consecutive_passes_in_top_bucket: 1 });
     const { next_state, enteredPermanent } = applyReview(s, deck, gradChild, TODAY, { kind: 'pass' });
     expect(next_state.consecutive_passes_in_top_bucket).toBe(2);
-    expect(next_state.permanent_at).toBeNull();
+    expect(next_state.bucket_index).toBe(E);
     expect(enteredPermanent).toBe(false);
   });
 
-  it('a failing permanent card leaves the pool and drops to bucket 0', () => {
-    const s = makeState({
-      bucket_index: E,
-      permanent_at: '2026-06-01T12:00:00.000Z',
-      consecutive_passes_in_top_bucket: 7,
-    });
+  it('a failing permanent card leaves the bucket and drops to bucket 0', () => {
+    const s = makeState({ bucket_index: PERM, consecutive_passes_in_top_bucket: 7 });
     const { next_state, enteredPermanent } = applyReview(s, deck, makeChild(), TODAY, { kind: 'fail' });
     expect(next_state.bucket_index).toBe(A);
-    expect(next_state.permanent_at).toBeNull();
     expect(next_state.consecutive_passes_in_top_bucket).toBe(0);
     expect(enteredPermanent).toBe(false);
   });
 
-  it('a passing permanent card stays permanent and keeps its original stamp', () => {
-    const stamp = '2026-06-01T12:00:00.000Z';
+  it('a passing permanent card stays in the permanent bucket', () => {
     const s = makeState({
-      bucket_index: E,
-      permanent_at: stamp,
+      bucket_index: PERM,
       last_tested_on: addDays(TODAY, -5),
       consecutive_passes_in_top_bucket: 7,
     });
@@ -240,20 +231,18 @@ describe('applyReview', () => {
       TODAY,
       { kind: 'pass' },
     );
-    expect(next_state.bucket_index).toBe(E);
-    expect(next_state.permanent_at).toBe(stamp); // unchanged, not re-stamped
+    expect(next_state.bucket_index).toBe(PERM);
     expect(next_state.last_tested_on).toBe(TODAY); // weight anchor for the lottery
     expect(next_state.consecutive_passes_in_top_bucket).toBe(8);
     expect(enteredPermanent).toBe(false); // already permanent
   });
 
-  it('a fresh graduation keeps the top bucket (grid-excluded from that point on)', () => {
+  it('a fresh graduation moves into the permanent bucket, off the grid', () => {
     const s = makeState({ bucket_index: E, consecutive_passes_in_top_bucket: 1 });
     const { next_state } = applyReview(s, deck, makeChild({ graduate_after_passes: 2 }), TODAY, {
       kind: 'pass',
     });
-    expect(next_state.bucket_index).toBe(E);
-    expect(next_state.permanent_at).toEqual(expect.any(String));
+    expect(next_state.bucket_index).toBe(PERM);
     expect(isDueToday(next_state, IV, 0, TODAY)).toBe(false); // no longer grid-due
   });
 });

@@ -43,7 +43,7 @@ export default function ProfilePicker() {
           list.map(async (c) => {
             const [due, permDraws] = await Promise.all([
               db.countDueCardsForChild(c.id, today).catch(() => 0),
-              db.listPermanentDrawsForChild(c.id, today).then((d) => d.length).catch(() => 0),
+              db.listPermanentDrawsForChild(c.id, today, parent.timezone).then((d) => d.length).catch(() => 0),
             ]);
             return due + permDraws;
           }),

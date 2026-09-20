@@ -17,7 +17,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentChild } from '@/lib/current-child';
 import { db } from '@/lib/db';
-import { applyReview, bucketLetter, checkTypedAnswer } from '@/lib/leitner';
+import { applyReview, bucketLabel, checkTypedAnswer } from '@/lib/leitner';
 import {
   clearReviewSession,
   loadReviewSession,
@@ -30,7 +30,8 @@ type QueueItem = {
   state: CardState;
   card: Card;
   deck: Deck;
-  // Permanent-pool (lottery) draw; such cards trail the grid-due queue.
+  // Came from the permanent-bucket lottery rather than the grid; such cards
+  // trail the grid-due queue. The badge reads the bucket itself.
   isPermanent?: boolean;
 };
 
@@ -69,6 +70,11 @@ export default function ReviewScreen() {
   const [passes, setPasses] = useState(0);
   const [fails, setFails] = useState(0);
   const [today, setToday] = useState('');
+  // A second tap before the first write lands would grade the same card twice —
+  // two review rows, a double-counted tally. The ref rejects it synchronously
+  // (state would not have re-rendered yet); `submitting` only greys the buttons.
+  const inFlight = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!child) return;
@@ -94,7 +100,7 @@ export default function ReviewScreen() {
 
       const [due, keepers] = await Promise.all([
         db.listDueCardStatesForChild(childId, _today),
-        db.listPermanentDrawsForChild(childId, _today),
+        db.listPermanentDrawsForChild(childId, _today, tz),
       ]);
       if (cancelled) return;
       // One item per card — no backlog stacking. Strip the joined card/deck so
@@ -157,6 +163,18 @@ export default function ReviewScreen() {
     outcome: 'pass' | 'fail',
     input: string | null,
   ) {
+    if (!child || !items || inFlight.current) return;
+    inFlight.current = true;
+    setSubmitting(true);
+    try {
+      await writeResult(outcome, input);
+    } finally {
+      inFlight.current = false;
+      setSubmitting(false);
+    }
+  }
+
+  async function writeResult(outcome: 'pass' | 'fail', input: string | null) {
     if (!child || !items) return;
     const item = items[index];
     const update = applyReview(item.state, item.deck, child, today, { kind: outcome });
@@ -169,9 +187,6 @@ export default function ReviewScreen() {
       bucket_before: item.state.bucket_index,
       bucket_after: update.next_state.bucket_index,
       user_input: input,
-      // Lets "reset today" undo fresh graduations while preserving cards that
-      // were already permanent this morning.
-      was_permanent_before: !!item.state.permanent_at,
     });
 
     const nextPasses = outcome === 'pass' ? passes + 1 : passes;
@@ -238,7 +253,7 @@ export default function ReviewScreen() {
 
         <ThemedText themeColor="textSecondary" type="small" style={styles.meta}>
           {current.deck.name} ·{' '}
-          {current.isPermanent ? '🏆 Permanent' : `Bucket ${bucketLetter(current.state.bucket_index)}`}
+          {bucketLabel(current.state.bucket_index, current.deck.bucket_intervals_days)}
         </ThemedText>
 
         <ThemedView type="backgroundElement" style={styles.cardArea}>
@@ -270,20 +285,20 @@ export default function ReviewScreen() {
           )}
           {current.card.grading_mode !== 'typed' && (revealed || noBack) && (
             <View style={styles.dualButtons}>
-              <ResultButton label="Missed" tone="fail" onPress={() => recordAndAdvance('fail', null)} />
-              <ResultButton label="Got it" tone="pass" onPress={() => recordAndAdvance('pass', null)} />
+              <ResultButton label="Missed" tone="fail" disabled={submitting} onPress={() => recordAndAdvance('fail', null)} />
+              <ResultButton label="Got it" tone="pass" disabled={submitting} onPress={() => recordAndAdvance('pass', null)} />
             </View>
           )}
           {current.card.grading_mode === 'typed' && !revealed && (
             <PrimaryButton label="Check" onPress={checkTyped} />
           )}
           {current.card.grading_mode === 'typed' && revealed && typedResult === 'correct' && (
-            <ResultButton label="Continue" tone="pass" onPress={() => recordAndAdvance('pass', typedInput)} />
+            <ResultButton label="Continue" tone="pass" disabled={submitting} onPress={() => recordAndAdvance('pass', typedInput)} />
           )}
           {current.card.grading_mode === 'typed' && revealed && typedResult === 'wrong' && (
             <View style={styles.dualButtons}>
-              <ResultButton label="Missed" tone="fail" onPress={() => recordAndAdvance('fail', typedInput)} />
-              <ResultButton label="I had it" tone="pass" onPress={() => recordAndAdvance('pass', typedInput)} />
+              <ResultButton label="Missed" tone="fail" disabled={submitting} onPress={() => recordAndAdvance('fail', typedInput)} />
+              <ResultButton label="I had it" tone="pass" disabled={submitting} onPress={() => recordAndAdvance('pass', typedInput)} />
             </View>
           )}
           {items.length - index > 1 && (
@@ -447,14 +462,17 @@ function ResultButton({
   label,
   tone,
   onPress,
+  disabled,
 }: {
   label: string;
   tone: 'pass' | 'fail';
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
-      style={[styles.button, tone === 'pass' ? styles.pass : styles.fail]}
+      style={[styles.button, tone === 'pass' ? styles.pass : styles.fail, disabled && styles.disabled]}
+      disabled={disabled}
       onPress={onPress}>
       <ThemedText style={styles.buttonText}>{label}</ThemedText>
     </Pressable>
@@ -477,6 +495,7 @@ const styles = StyleSheet.create({
   front: { textAlign: 'center' },
   back: { textAlign: 'center' },
   actions: { gap: Spacing.three },
+  disabled: { opacity: 0.5 },
   skipBtn: { alignItems: 'center', paddingVertical: Spacing.two },
   dualButtons: { flexDirection: 'row', gap: Spacing.three },
   button: {

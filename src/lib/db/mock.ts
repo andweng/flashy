@@ -1,7 +1,15 @@
 // In-memory mock DB used while building UI. Reads/writes a fixture set.
 // Swap to a Supabase-backed impl in lib/db/index.ts when ready.
 
-import { addDays, cycleDayOf, isDueToday, pickPermanentDraws, todayInTz } from '@/lib/leitner';
+import {
+  addDays,
+  cycleDayOf,
+  isDueToday,
+  isPermanentBucket,
+  permanentBucketIndex,
+  pickPermanentDraws,
+  todayInTz,
+} from '@/lib/leitner';
 import type { Card, CardState, Child, Deck, DeckAssignment, GradingMode, Parent, Review } from '@/types/domain';
 import type { CardStateWithCard, DB } from './types';
 
@@ -93,7 +101,6 @@ const states: CardState[] = (() => {
         bucket_index: p.bucket,
         last_tested_on: p.lastTested,
         consecutive_passes_in_top_bucket: 0,
-        permanent_at: null,
         last_reviewed_at: null,
       });
     });
@@ -108,14 +115,45 @@ const reviews: Review[] = [];
 // pass counter carry over so due-ness and graduation progress keep flowing on
 // the new bucket's grid. States for unassigned children are re-clamped too —
 // they persist to preserve progress.
-function reclampBucketsForDeck(deckId: string, nextDeck: Deck) {
-  const topIdx = nextDeck.bucket_intervals_days.length - 1;
+//
+// Permanent cards ride the change: removing an interval tier is not a demotion
+// of everything that graduated, so a card at the old permanent index moves to
+// the new one and stays permanent. That needs the deck as it was, hence prevDeck.
+function reclampBucketsForDeck(deckId: string, prevDeck: Deck, nextDeck: Deck) {
+  const wasPermanent = permanentBucketIndex(prevDeck.bucket_intervals_days);
+  const nowPermanent = permanentBucketIndex(nextDeck.bucket_intervals_days);
+  const newTopInterval = nowPermanent - 1;
   const deckCardIds = new Set(cards.filter((c) => c.deck_id === deckId).map((c) => c.id));
   for (const s of states) {
-    if (deckCardIds.has(s.card_id) && s.bucket_index > topIdx) {
-      s.bucket_index = topIdx;
-    }
+    if (!deckCardIds.has(s.card_id)) continue;
+    if (s.bucket_index >= wasPermanent) s.bucket_index = nowPermanent;
+    else if (s.bucket_index > newTopInterval) s.bucket_index = newTopInterval;
   }
+}
+
+// Cards that were in the permanent bucket when they were answered today but are
+// no longer in the pool — a miss drops them to bucket 0. They have spent one of
+// the day's draw slots; without counting them the budget refunds itself (see
+// pickPermanentDraws). bucket_before on the review says where the card was.
+function countPermanentExitsToday(
+  childId: string,
+  pool: { card_id: string }[],
+  timezone: string,
+): number {
+  const realToday = todayInTz(timezone);
+  const inPool = new Set(pool.map((c) => c.card_id));
+  const exits = new Set(
+    reviews
+      .filter((r) => {
+        if (r.child_id !== childId || inPool.has(r.card_id)) return false;
+        const card = cards.find((c) => c.id === r.card_id);
+        const deck = card && decks.find((d) => d.id === card.deck_id);
+        if (!deck || !isPermanentBucket(r.bucket_before, deck.bucket_intervals_days)) return false;
+        return todayInTz(timezone, new Date(r.reviewed_at)) === realToday;
+      })
+      .map((r) => r.card_id),
+  );
+  return exits.size;
 }
 
 export const mockDB: DB = {
@@ -193,9 +231,10 @@ export const mockDB: DB = {
   async updateDeck(id, patch) {
     const idx = decks.findIndex((d) => d.id === id);
     if (idx < 0) throw new Error('Deck not found');
-    const next = { ...decks[idx], ...patch };
+    const prev = decks[idx];
+    const next = { ...prev, ...patch };
     decks[idx] = next;
-    reclampBucketsForDeck(id, next);
+    reclampBucketsForDeck(id, prev, next);
     return next;
   },
   async deleteDeck(id) {
@@ -234,7 +273,6 @@ export const mockDB: DB = {
         bucket_index: 0,
         last_tested_on: null,
         consecutive_passes_in_top_bucket: 0,
-        permanent_at: null,
         last_reviewed_at: null,
       });
     }
@@ -271,7 +309,6 @@ export const mockDB: DB = {
           bucket_index: 0,
           last_tested_on: null,
           consecutive_passes_in_top_bucket: 0,
-          permanent_at: null,
           last_reviewed_at: null,
         });
       }
@@ -294,7 +331,7 @@ export const mockDB: DB = {
         .map((a) => [a.deck_id, a.cycle_start_date ?? null]),
     );
     return states
-      .filter((s) => s.child_id === childId && !s.permanent_at)
+      .filter((s) => s.child_id === childId)
       .map((s) => {
         const card = cards.find((c) => c.id === s.card_id)!;
         const deck = decks.find((d) => d.id === card.deck_id)!;
@@ -306,7 +343,7 @@ export const mockDB: DB = {
         return isDueToday(row, row.deck.bucket_intervals_days, cycleDay, today);
       });
   },
-  async listPermanentDrawsForChild(childId, today): Promise<CardStateWithCard[]> {
+  async listPermanentDrawsForChild(childId, today, timezone): Promise<CardStateWithCard[]> {
     // The daily weighted lottery over this child's permanent (mastery) cards.
     // Same assigned-deck gate as the due list; the draw itself is the pure,
     // day-stable pickPermanentDraws (seeded by child+today).
@@ -316,14 +353,24 @@ export const mockDB: DB = {
       assignments.filter((a) => a.child_id === childId).map((a) => a.deck_id),
     );
     const pool = states
-      .filter((s) => s.child_id === childId && s.permanent_at)
+      .filter((s) => s.child_id === childId)
       .map((s) => {
         const card = cards.find((c) => c.id === s.card_id)!;
         const deck = decks.find((d) => d.id === card.deck_id)!;
         return { ...s, card, deck };
       })
-      .filter((row) => startByDeck.has(row.deck.id));
-    return pickPermanentDraws(pool, child.permanent_draws_per_day, today, `keeper:${childId}:${today}`);
+      .filter(
+        (row) =>
+          startByDeck.has(row.deck.id) &&
+          isPermanentBucket(row.bucket_index, row.deck.bucket_intervals_days),
+      );
+    return pickPermanentDraws(
+      pool,
+      child.permanent_draws_per_day,
+      today,
+      `keeper:${childId}:${today}`,
+      countPermanentExitsToday(childId, pool, timezone),
+    );
   },
   async listCardStatesForChild(childId) {
     return states.filter((s) => s.child_id === childId);
@@ -356,13 +403,13 @@ export const mockDB: DB = {
       .sort((a, b) => a.reviewed_at.localeCompare(b.reviewed_at));
     if (todays.length === 0) return 0;
 
+    // The earliest review of the day holds the bucket the card had this morning.
+    // Restoring it restores permanence too, since permanent is just the last
+    // bucket — a fresh graduation is undone and an established permanent card
+    // stays permanent, with no separate flag to reconcile.
     const bucketBefore = new Map<string, number>();
-    const permanentBefore = new Map<string, boolean>();
     for (const r of todays) {
-      if (!bucketBefore.has(r.card_id)) {
-        bucketBefore.set(r.card_id, r.bucket_before);
-        permanentBefore.set(r.card_id, r.was_permanent_before);
-      }
+      if (!bucketBefore.has(r.card_id)) bucketBefore.set(r.card_id, r.bucket_before);
     }
 
     for (const [cardId, bucket] of bucketBefore) {
@@ -373,9 +420,6 @@ export const mockDB: DB = {
           bucket_index: bucket,
           last_tested_on: null, // force due again for the rest of today
           consecutive_passes_in_top_bucket: 0,
-          // Preserve permanent status only for cards already permanent before
-          // today; today's fresh graduations are undone by the reset.
-          permanent_at: permanentBefore.get(cardId) ? states[idx].permanent_at : null,
           last_reviewed_at: null,
         };
       }
