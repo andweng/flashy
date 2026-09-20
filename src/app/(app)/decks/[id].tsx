@@ -678,13 +678,17 @@ export default function DeckDetailScreen() {
               <View style={styles.addBucketGroup}>
                 <ThemedText type="small">Start bucket</ThemedText>
                 <View style={styles.bucketPickerRow}>
-                  {deck.bucket_intervals_days.map((_, i) => (
+                  {bucketIndexes(deck.bucket_intervals_days).map((i) => (
                     <Pressable
                       key={i}
                       onPress={() => setAddBucket(i)}
                       disabled={addPending}
                       style={[styles.bucketBtn, addBucket === i && styles.bucketBtnActive]}>
-                      <ThemedText>{bucketLetter(i)}</ThemedText>
+                      <ThemedText>
+                        {i === permanentBucketIndex(deck.bucket_intervals_days)
+                          ? '🏆'
+                          : bucketLetter(i)}
+                      </ThemedText>
                     </Pressable>
                   ))}
                 </View>
