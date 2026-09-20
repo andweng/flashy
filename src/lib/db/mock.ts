@@ -118,6 +118,30 @@ function reclampBucketsForDeck(deckId: string, nextDeck: Deck) {
   }
 }
 
+// Cards that were permanent when they were answered today but are no longer in
+// the pool — a miss clears permanent_at. They have spent one of the day's draw
+// slots; without counting them the budget refunds itself (see pickPermanentDraws).
+function countPermanentExitsToday(
+  childId: string,
+  pool: { card_id: string }[],
+  timezone: string,
+): number {
+  const realToday = todayInTz(timezone);
+  const inPool = new Set(pool.map((c) => c.card_id));
+  const exits = new Set(
+    reviews
+      .filter(
+        (r) =>
+          r.child_id === childId &&
+          r.was_permanent_before &&
+          !inPool.has(r.card_id) &&
+          todayInTz(timezone, new Date(r.reviewed_at)) === realToday,
+      )
+      .map((r) => r.card_id),
+  );
+  return exits.size;
+}
+
 export const mockDB: DB = {
   async getCurrentParent() {
     return parent;
@@ -306,7 +330,7 @@ export const mockDB: DB = {
         return isDueToday(row, row.deck.bucket_intervals_days, cycleDay, today);
       });
   },
-  async listPermanentDrawsForChild(childId, today): Promise<CardStateWithCard[]> {
+  async listPermanentDrawsForChild(childId, today, timezone): Promise<CardStateWithCard[]> {
     // The daily weighted lottery over this child's permanent (mastery) cards.
     // Same assigned-deck gate as the due list; the draw itself is the pure,
     // day-stable pickPermanentDraws (seeded by child+today).
@@ -323,7 +347,13 @@ export const mockDB: DB = {
         return { ...s, card, deck };
       })
       .filter((row) => startByDeck.has(row.deck.id));
-    return pickPermanentDraws(pool, child.permanent_draws_per_day, today, `keeper:${childId}:${today}`);
+    return pickPermanentDraws(
+      pool,
+      child.permanent_draws_per_day,
+      today,
+      `keeper:${childId}:${today}`,
+      countPermanentExitsToday(childId, pool, timezone),
+    );
   },
   async listCardStatesForChild(childId) {
     return states.filter((s) => s.child_id === childId);

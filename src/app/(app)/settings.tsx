@@ -136,7 +136,7 @@ export default function SettingsScreen() {
       const today = getEffectiveToday(tz);
       const [due, keepers] = await Promise.all([
         db.listDueCardStatesForChild(child.id, today),
-        db.listPermanentDrawsForChild(child.id, today),
+        db.listPermanentDrawsForChild(child.id, today, tz),
       ]);
       const all = [...due, ...keepers];
       for (const item of all) {

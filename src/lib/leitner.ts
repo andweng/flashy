@@ -336,17 +336,26 @@ function drawKey(cardId: string, weight: number, seedStr: string): number {
 // excluded from the result AND counted against y — the list shrinks one card at
 // a time as the child works through it and hits 0 when the budget is spent,
 // instead of refilling itself from the rest of the pool.
+//
+// `spentOutsidePool` closes the hole in deriving that spend from the pool alone:
+// a miss clears permanent_at, so a card answered today can leave the pool and
+// stop counting, silently refunding its slot and letting the lottery draw a
+// replacement — a child who misses everything drains the whole pool in one day.
+// The caller counts those from the review log (which records what each card was
+// before the answer) and passes them in.
 export function pickPermanentDraws<T extends PermanentDrawCandidate>(
   pool: T[],
   y: number,
   today: string,
   seedStr: string,
+  spentOutsidePool = 0,
 ): T[] {
   if (y <= 0 || pool.length === 0) return [];
   const rows = poolDaysSinceTest(pool, today);
   const testedToday = rows.filter((r) => r.days <= 0).length;
-  // Everything tested today has spent a slot, whether or not the lottery drew it.
-  const slots = Math.min(y - testedToday, rows.length - testedToday);
+  // Everything answered today has spent a slot, whether or not the lottery drew
+  // it and whether or not it is still in the pool.
+  const slots = Math.min(y - testedToday - spentOutsidePool, rows.length - testedToday);
   if (slots <= 0) return [];
 
   // Bar anything still inside its cooldown. The cooldown depends only on the pool

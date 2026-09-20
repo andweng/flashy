@@ -42,7 +42,13 @@ export interface DB {
   // permanent_draws_per_day cards, weighted by days-since-last-test (see
   // pickPermanentDraws in leitner.ts). Same assigned-deck gate as
   // listDueCardStatesForChild; the seeded draw is stable for the whole day.
-  listPermanentDrawsForChild(childId: string, today: string): Promise<CardStateWithCard[]>;
+  // `timezone` is the parent's, used to pin "answered today" in the review log —
+  // a miss drops a card out of the pool, so the pool's own stamps can't see it.
+  listPermanentDrawsForChild(
+    childId: string,
+    today: string,
+    timezone: string,
+  ): Promise<CardStateWithCard[]>;
   listCardStatesForChild(childId: string): Promise<CardState[]>;
   countDueCardsForChild(childId: string, today: string): Promise<number>;
   upsertCardState(state: CardState): Promise<void>;

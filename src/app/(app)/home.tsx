@@ -26,10 +26,11 @@ export default function HomeScreen() {
       let cancelled = false;
       void (async () => {
         const parent = await db.getCurrentParent();
-        const today = getEffectiveToday(parent?.timezone ?? 'UTC');
+        const tz = parent?.timezone ?? 'UTC';
+        const today = getEffectiveToday(tz);
         const [due, keepers] = await Promise.all([
           db.listDueCardStatesForChild(child.id, today),
-          db.listPermanentDrawsForChild(child.id, today),
+          db.listPermanentDrawsForChild(child.id, today, tz),
         ]);
         if (cancelled) return;
 

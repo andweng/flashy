@@ -343,7 +343,7 @@ export const supabaseDB: DB = {
       });
   },
 
-  async listPermanentDrawsForChild(childId, today): Promise<CardStateWithCard[]> {
+  async listPermanentDrawsForChild(childId, today, timezone): Promise<CardStateWithCard[]> {
     // The daily weighted lottery over this child's permanent (mastery) cards
     // (see pickPermanentDraws in leitner.ts). Same assigned-deck gate as the
     // due list, so keepers from unassigned decks never leak into review.
@@ -377,11 +377,43 @@ export const supabaseDB: DB = {
         return { ...stateFields, card: cardFields, deck };
       })
       .filter((row) => assigned.has(row.deck.id));
+    // A miss clears permanent_at, so a card answered today can drop out of `pool`
+    // and stop counting against the day's budget — which refunds its slot and lets
+    // the lottery draw a replacement. The review log remembers what each card was
+    // before the answer, so count the ones that left from there. Same coarse
+    // 1-day window + exact tz-date filter as resetTodaysReviewsForChild.
+    const sinceIso = `${addDays(todayInTz(timezone), -1)}T00:00:00.000Z`;
+    const { data: recent, error: revErr } = await supabase
+      .from('reviews')
+      .select('card_id, reviewed_at, card:cards!inner(deck_id)')
+      .eq('child_id', childId)
+      .eq('was_permanent_before', true)
+      .gte('reviewed_at', sinceIso);
+    if (revErr) throw revErr;
+
+    const realToday = todayInTz(timezone);
+    const inPool = new Set(pool.map((r) => r.card_id));
+    const exited = new Set(
+      ((recent ?? []) as unknown as {
+        card_id: string;
+        reviewed_at: string;
+        card: { deck_id: string };
+      }[])
+        .filter(
+          (r) =>
+            !inPool.has(r.card_id) &&
+            assigned.has(r.card.deck_id) &&
+            todayInTz(timezone, new Date(r.reviewed_at)) === realToday,
+        )
+        .map((r) => r.card_id),
+    );
+
     return pickPermanentDraws(
       pool,
       child.permanent_draws_per_day,
       today,
       `keeper:${childId}:${today}`,
+      exited.size,
     );
   },
 
