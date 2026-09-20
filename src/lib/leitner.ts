@@ -241,10 +241,17 @@ export function togglePermanent(state: CardState, today: string): CardState {
 //
 // - Weight = (days since last test)². A card tested today has weight 0 and is
 //   impossible to redraw that day; the stalest cards dominate the draw.
+// - COOLDOWN: weighting alone is not enough. It is memoryless, so a card tested
+//   yesterday is still a legal pick today — unlikely per card, but across a whole
+//   pool it surfaces often enough to read as "the same words again". So cards
+//   tested within the last `permanentCooldownDays` days are barred outright: a
+//   word cannot come back until the pool has had a real chance to cycle.
 // - y is a DAILY BUDGET, not a queue length: a card tested today has spent one of
 //   today's slots, so it drops off the list without another card taking its place.
 //   That is what makes the due count fall to 0 as the set is completed, and what
 //   keeps the pool rotating across days instead of being drained every day.
+//   The cooldown deliberately does NOT feed this budget — a card sitting out is
+//   not a card you reviewed, so barring it must never shrink the day's draw.
 // - Draw size = min(y, pool): small pools get fully tested ("test all eligible").
 // - No stored picks and no stored weight — everything derives from last_tested_on,
 //   consistent with the derive-don't-store model above.
@@ -272,16 +279,37 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-// Draw weight for one permanent card. d = days since last test:
-//   d ≤ 0 (tested today, or a future-dated stamp) → 0: impossible to redraw today.
-//   null (never tested, e.g. after a reset)      → 1: eligible, but deprioritized
-//                                                  relative to anything older.
-//   otherwise d². The square makes the penalty for recent tests steep enough
-//   that immediate re-tests are statistically unlikely, without ever being a
-//   hard exclusion (no card is barred, only weighted down).
-export function permanentWeight(lastTestedOn: string | null, today: string): number {
-  const d = lastTestedOn == null ? 1 : Math.max(0, daysBetween(lastTestedOn, today));
+// Draw weight for one permanent card, from `days` since its last test. The square
+// tilts the draw hard towards the stalest cards; the cooldown below is what
+// actually bars a recent one. d ≤ 0 (tested today, or a future-dated stamp) → 0.
+export function permanentWeight(days: number): number {
+  const d = Math.max(0, days);
   return d * d;
+}
+
+// How long a just-tested card sits out before it can be drawn again: half a pass
+// through the pool at the current budget, so a word is never repeated until at
+// least half the pool has been seen. Pools at or below 2y get 0 — they are meant
+// to be tested (near-)daily, and a cooldown there would only starve the draw.
+export function permanentCooldownDays(poolSize: number, y: number): number {
+  if (y <= 0) return 0;
+  return Math.floor(poolSize / (2 * y));
+}
+
+// Days since each pool card was last tested. A null stamp means "never tested"
+// (a fresh pool member, or one cleared by "reset today") and has no anchor of its
+// own, so it takes the stalest value in the pool + 1: never-tested outranks
+// everything dated instead of being pinned at the bottom of the weighting, where
+// it would be starved out of the draw forever.
+function poolDaysSinceTest<T extends PermanentDrawCandidate>(
+  pool: T[],
+  today: string,
+): { c: T; days: number }[] {
+  const dated = pool.map((c) =>
+    c.last_tested_on == null ? null : Math.max(0, daysBetween(c.last_tested_on, today)),
+  );
+  const neverTested = dated.reduce<number>((max, d) => (d != null && d > max ? d : max), 0) + 1;
+  return pool.map((c, i) => ({ c, days: dated[i] ?? neverTested }));
 }
 
 export type PermanentDrawCandidate = {
@@ -315,14 +343,23 @@ export function pickPermanentDraws<T extends PermanentDrawCandidate>(
   seedStr: string,
 ): T[] {
   if (y <= 0 || pool.length === 0) return [];
-  const eligible = pool
-    .map((c) => ({ c, weight: permanentWeight(c.last_tested_on, today) }))
-    .filter((e) => e.weight > 0);
-  // Everything else in the pool was tested today and has spent a slot.
-  const slots = Math.min(y - (pool.length - eligible.length), eligible.length);
+  const rows = poolDaysSinceTest(pool, today);
+  const testedToday = rows.filter((r) => r.days <= 0).length;
+  // Everything tested today has spent a slot, whether or not the lottery drew it.
+  const slots = Math.min(y - testedToday, rows.length - testedToday);
   if (slots <= 0) return [];
-  return eligible
-    .map((e) => ({ c: e.c, key: drawKey(e.c.card_id, e.weight, seedStr) }))
+
+  // Bar anything still inside its cooldown. The cooldown depends only on the pool
+  // size and y — both fixed for the day — so reviewing one card removes exactly
+  // that card from the candidates and leaves every other key untouched. If the
+  // pool cannot field enough rested cards (a burst of same-day graduations, say),
+  // drop the bar wholesale rather than short-change the day's draw.
+  const cooldown = permanentCooldownDays(pool.length, y);
+  const rested = rows.filter((r) => r.days > cooldown);
+  const candidates = rested.length >= slots ? rested : rows.filter((r) => r.days > 0);
+
+  return candidates
+    .map((e) => ({ c: e.c, key: drawKey(e.c.card_id, permanentWeight(e.days), seedStr) }))
     .sort((a, b) => b.key - a.key)
     .slice(0, slots)
     .map((e) => e.c);
