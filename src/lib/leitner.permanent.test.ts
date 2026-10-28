@@ -7,10 +7,10 @@ import {
   addDays,
   bucketIndexes,
   bucketLabel,
-  isPermanentBucket,
-  permanentBucketIndex,
   DEFAULT_BUCKET_INTERVALS,
   isDueToday,
+  isPermanent,
+  PERMANENT_BUCKET,
   permanentCooldownDays,
   pickPermanentDraws,
   permanentWeight,
@@ -210,23 +210,29 @@ function makeState(overrides: Partial<CardState> = {}): CardState {
   };
 }
 
-describe('reBucket — permanent is just the last bucket', () => {
-  const intervals = DEFAULT_BUCKET_INTERVALS; // 5 intervals ⇒ permanent is index 5
-  const PERM = permanentBucketIndex(intervals);
+describe('reBucket — permanent is the -1 sentinel bucket', () => {
+  const intervals = DEFAULT_BUCKET_INTERVALS;
+  const PERM = PERMANENT_BUCKET;
 
   it('into permanent: stamps last_tested_on = today, becomes non-due', () => {
-    const out = reBucket(makeState(), PERM, BASE);
-    expect(out.bucket_index).toBe(PERM);
+    const out = reBucket(makeState({ bucket_index: 2, consecutive_passes_in_top_bucket: 3 }), PERM, BASE);
+    expect(isPermanent(out)).toBe(true);
     expect(out.last_tested_on).toBe(BASE); // weight 0 today: not drawn until later
+    expect(out.consecutive_passes_in_top_bucket).toBe(0);
     expect(isDueToday(out, intervals, 5, BASE)).toBe(false);
   });
 
-  it('permanent can only ever be the last bucket — there is no permanent bucket A', () => {
-    expect(isPermanentBucket(0, intervals)).toBe(false);
-    expect(isPermanentBucket(intervals.length - 1, intervals)).toBe(false);
-    expect(isPermanentBucket(PERM, intervals)).toBe(true);
-    // The pickable buckets are the intervals plus exactly one permanent slot.
-    expect(bucketIndexes(intervals)).toEqual([0, 1, 2, 3, 4, 5]);
+  it('permanent is independent of the deck: one sentinel, however many intervals', () => {
+    expect(isPermanent({ bucket_index: PERM })).toBe(true);
+    expect(isPermanent({ bucket_index: 0 })).toBe(false);
+    // A card in the top interval bucket of ANY deck is not permanent.
+    expect(isPermanent({ bucket_index: intervals.length - 1 })).toBe(false);
+    expect(isPermanent({ bucket_index: intervals.length })).toBe(false);
+  });
+
+  it('the pickable buckets are the intervals, then the permanent sentinel last', () => {
+    expect(bucketIndexes(intervals)).toEqual([0, 1, 2, 3, 4, PERM]);
+    expect(bucketIndexes([1, 2])).toEqual([0, 1, PERM]);
   });
 
   it('out of permanent: back onto the grid, pass counter reset so mastery is re-earned', () => {
@@ -237,16 +243,22 @@ describe('reBucket — permanent is just the last bucket', () => {
     expect(isDueToday(out, intervals, 5, BASE)).toBe(true);
   });
 
+  it('out of permanent into a higher bucket waits for that bucket\'s first slot', () => {
+    const out = reBucket(makeState({ bucket_index: PERM }), 2, BASE);
+    expect(out.bucket_index).toBe(2);
+    expect(out.last_tested_on).toBe(BASE);
+  });
+
   it('round-trips: into permanent → back out leaves an ordinary grid card', () => {
     const out = reBucket(reBucket(makeState(), PERM, BASE), 2, BASE);
-    expect(isPermanentBucket(out.bucket_index, intervals)).toBe(false);
+    expect(isPermanent(out)).toBe(false);
     expect(out.bucket_index).toBe(2);
   });
 
   it('labels the permanent bucket by name, the rest by letter', () => {
-    expect(bucketLabel(0, intervals)).toBe('Bucket A');
-    expect(bucketLabel(4, intervals)).toBe('Bucket E');
-    expect(bucketLabel(PERM, intervals)).toBe('🏆 Permanent');
+    expect(bucketLabel(0)).toBe('Bucket A');
+    expect(bucketLabel(4)).toBe('Bucket E');
+    expect(bucketLabel(PERM)).toBe('🏆 Permanent');
   });
 });
 

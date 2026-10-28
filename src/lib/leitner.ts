@@ -4,36 +4,33 @@ import type { Card, CardState, Child, Deck } from '@/types/domain';
 
 export const DEFAULT_BUCKET_INTERVALS = [1, 2, 4, 8, 16];
 
+// ─── the permanent bucket ─────────────────────────────────────────────────────
+// Permanent (mastered) is a sentinel bucket, not a flag hanging off a card and not
+// "the deck's last index": bucket_index = PERMANENT_BUCKET (-1) means off the
+// grid, re-tested by the daily weighted lottery (see "permanent pool draws"
+// below). A card is either in a bucket or permanent, never both, and -1 is
+// independent of how many interval buckets the deck has — resizing a deck never
+// moves a permanent card. Always test via isPermanent(); never compare against
+// the literal, and never index `intervals[-1]`.
+export const PERMANENT_BUCKET = -1;
+
+export function isPermanent(state: { bucket_index: number } | number): boolean {
+  return (typeof state === 'number' ? state : state.bucket_index) === PERMANENT_BUCKET;
+}
+
 export function bucketLetter(index: number): string {
+  if (isPermanent(index)) return '🏆';
   return String.fromCharCode(65 + index);
 }
 
-// ─── the permanent bucket ─────────────────────────────────────────────────────
-// Permanent is not a flag hanging off a card, it is the deck's LAST bucket —
-// one index past the configured intervals. That is the whole reason it can only
-// ever be last: it has no interval of its own, so there is no coherent "permanent
-// bucket A". Reaching it takes a card off the grid; the daily weighted lottery
-// re-tests it instead (see "permanent pool draws" below). Moving a card there is
-// an ordinary bucket change, and any move out of it is an ordinary bucket change
-// back — no separate toggle, no second source of truth.
-export function permanentBucketIndex(intervals: number[]): number {
-  return intervals.length;
-}
-
-export function isPermanentBucket(bucketIndex: number, intervals: number[]): boolean {
-  return bucketIndex >= permanentBucketIndex(intervals);
-}
-
-// Every bucket a card can be assigned to, grid buckets first and permanent last.
+// Every bucket a card can be assigned to: the grid buckets, then permanent last.
 export function bucketIndexes(intervals: number[]): number[] {
-  return Array.from({ length: intervals.length + 1 }, (_, i) => i);
+  return [...intervals.map((_, i) => i), PERMANENT_BUCKET];
 }
 
 // Display label. The permanent bucket has no interval, so it gets no letter.
-export function bucketLabel(bucketIndex: number, intervals: number[]): string {
-  return isPermanentBucket(bucketIndex, intervals)
-    ? '🏆 Permanent'
-    : `Bucket ${bucketLetter(bucketIndex)}`;
+export function bucketLabel(bucketIndex: number): string {
+  return isPermanent(bucketIndex) ? '🏆 Permanent' : `Bucket ${bucketLetter(bucketIndex)}`;
 }
 
 // Parses a comma- or space-separated list like "1, 3, 7, 11, 19" into intervals.
@@ -109,7 +106,7 @@ export function dueGroupsForDeckOnDay(
 ): { bucket: number; due: number; notDue: number }[] {
   const byBucket = new Map<number, { due: number; notDue: number }>();
   for (const s of states) {
-    if (isPermanentBucket(s.bucket_index, intervals)) continue;
+    if (isPermanent(s)) continue;
     const isDue =
       dueDateForCycleDay(realToday, cycleDay, s.bucket_index, intervals) === realToday;
     const row = byBucket.get(s.bucket_index) ?? { due: 0, notDue: 0 };
@@ -164,16 +161,17 @@ export function isDueToday(
   cycleDay: number,
   today: string,
 ): boolean {
-  if (isPermanentBucket(state.bucket_index, intervals)) return false;
+  if (isPermanent(state)) return false;
   if (state.last_tested_on == null) return true;
   return state.last_tested_on < mostRecentSlot(today, cycleDay, state.bucket_index, intervals);
 }
 
 // last_tested_on for a freshly-created card_state. Bucket 0 (interval 1) enters
 // today's rotation immediately (null ⇒ due). A higher bucket is marked "tested as
-// of today" so it waits for its first real grid slot rather than showing today.
+// of today" so it waits for its first real grid slot rather than showing today, and
+// so does permanent: weight 0 today, so the lottery cannot draw it until a later day.
 export function initialLastTested(today: string, bucketIndex: number): string | null {
-  return bucketIndex <= 0 ? null : today;
+  return bucketIndex === 0 ? null : today;
 }
 
 export type ReviewAction = { kind: 'pass' } | { kind: 'fail' };
@@ -187,11 +185,13 @@ export type StateUpdate = {
 // Apply a single review outcome under the last_tested_on model. There is no
 // catch-up/backlog: a due card is graded exactly once. Both outcomes stamp
 // last_tested_on = today, snapping the card onto its resulting bucket's grid.
-// - fail: drop to bucket 0, reset top-bucket pass counter. A permanent card is
-//   just a card in the last bucket, so this sends it back to the grind for free.
-// - pass: promote one bucket; at the top interval bucket, maybe graduate into the
-//   permanent bucket (its last_tested_on stamp then anchors the lottery weight).
-//   A card already in the permanent bucket stays there and keeps counting passes.
+// - fail: drop to bucket 0, reset top-bucket pass counter. A permanent card fails
+//   out of the pool the same way and must re-earn mastery.
+// - pass: promote one bucket; a pass in the top INTERVAL bucket counts towards
+//   graduation, and reaching the threshold moves the card to PERMANENT_BUCKET
+//   (its last_tested_on stamp then anchors the lottery weight) with the counter
+//   reset. A pass on a card that is already permanent leaves it there — it must
+//   not fall through to the "promote one bucket" arithmetic and land in bucket 0.
 export function applyReview(
   state: CardState,
   deck: Deck,
@@ -200,6 +200,7 @@ export function applyReview(
   action: ReviewAction,
 ): StateUpdate {
   const nowIso = new Date().toISOString();
+  const wasPermanent = isPermanent(state);
 
   if (action.kind === 'fail') {
     return {
@@ -214,43 +215,39 @@ export function applyReview(
     };
   }
 
-  const permanentIndex = permanentBucketIndex(deck.bucket_intervals_days);
-  const alreadyPermanent = state.bucket_index >= permanentIndex;
   // The top *interval* bucket — the last one a pass can promote out of.
-  const atTop = state.bucket_index >= permanentIndex - 1;
+  const atTop = !wasPermanent && state.bucket_index >= deck.bucket_intervals_days.length - 1;
   const nextPasses = atTop ? state.consecutive_passes_in_top_bucket + 1 : 0;
   const graduates =
-    !alreadyPermanent &&
     atTop &&
     child.graduate_after_passes != null &&
     child.graduate_after_passes > 0 &&
     nextPasses >= child.graduate_after_passes;
-  const nextBucket = alreadyPermanent || graduates
-    ? permanentIndex
-    : atTop
-      ? state.bucket_index
-      : state.bucket_index + 1;
+  const nextBucket =
+    wasPermanent || graduates
+      ? PERMANENT_BUCKET
+      : atTop
+        ? state.bucket_index
+        : state.bucket_index + 1;
 
-  return {
-    next_state: {
-      ...state,
-      bucket_index: nextBucket,
-      last_tested_on: today,
-      consecutive_passes_in_top_bucket: nextPasses,
-      last_reviewed_at: nowIso,
-    },
-    enteredPermanent: graduates,
+  const next_state: CardState = {
+    ...state,
+    bucket_index: nextBucket,
+    last_tested_on: today,
+    consecutive_passes_in_top_bucket: graduates ? 0 : nextPasses,
+    last_reviewed_at: nowIso,
   };
+  return { next_state, enteredPermanent: !wasPermanent && isPermanent(next_state) };
 }
 
 // Manually move a card to a bucket, bypassing the natural promotion in
-// applyReview. One path for every bucket, permanent included — it is just the
-// last index (permanentBucketIndex), so there is nothing special to toggle.
-// The card lands on its new bucket's natural schedule (initialLastTested: bucket
-// A is due immediately, anything above waits for its first real slot, and
-// permanent joins the lottery at weight 0 today so it is not drawn until a later
-// day). The pass counter resets, so a card dropped out of permanent has to
-// re-earn mastery instead of instantly re-graduating on its next top-bucket pass.
+// applyReview. One path for every bucket, permanent included (PERMANENT_BUCKET is
+// just another choice), so there is nothing special to toggle. The card lands on
+// its new bucket's natural schedule (initialLastTested: bucket A is due
+// immediately, anything above waits for its first real slot, and permanent joins
+// the lottery at weight 0 today so it is not drawn until a later day). The pass
+// counter resets, so a card dropped out of permanent has to re-earn mastery
+// instead of instantly re-graduating on its next top-bucket pass.
 export function reBucket(state: CardState, bucketIndex: number, today: string): CardState {
   return {
     ...state,
@@ -262,8 +259,8 @@ export function reBucket(state: CardState, bucketIndex: number, today: string): 
 
 // ─── permanent pool draws ─────────────────────────────────────────────────────
 // Cards that reach mastery (the top-bucket pass threshold) don't retire — they
-// move into the deck's permanent bucket (see "the permanent bucket" above) and
-// keep getting re-tested by a daily weighted lottery: up to
+// move into the permanent bucket (see "the permanent bucket" above) and keep
+// getting re-tested by a daily weighted lottery: up to
 // `permanent_draws_per_day` per child per day.
 //
 // - Weight = (days since last test)². A card tested today has weight 0 and is
@@ -358,7 +355,7 @@ function drawKey(cardId: string, weight: number, seedStr: string): number {
 // seed → same picks, every call.
 //
 // y is the day's budget. Cards already tested today have used a slot (drawn and
-// reviewed, freshly graduated, or just toggled into the pool), so they are both
+// reviewed, freshly graduated, or just moved into the pool), so they are both
 // excluded from the result AND counted against y — the list shrinks one card at
 // a time as the child works through it and hits 0 when the budget is spent,
 // instead of refilling itself from the rest of the pool.

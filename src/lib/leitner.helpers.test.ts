@@ -12,6 +12,7 @@ import {
   dueGroupsForDeckOnDay,
   normalizeTypedInput,
   parseIntervalsList,
+  PERMANENT_BUCKET,
   todayInTz,
 } from '@/lib/leitner';
 import type { Card } from '@/types/domain';
@@ -36,6 +37,7 @@ describe('bucketLetter', () => {
     expect(bucketLetter(0)).toBe('A');
     expect(bucketLetter(1)).toBe('B');
     expect(bucketLetter(4)).toBe('E');
+    expect(bucketLetter(PERMANENT_BUCKET)).toBe('🏆'); // the sentinel never renders as a stray char
   });
 });
 
@@ -136,7 +138,7 @@ describe('dueGroupsForDeckOnDay', () => {
     { bucket_index: 0 },
     { bucket_index: 1 },
     { bucket_index: 2 },
-    { bucket_index: IV.length }, // the permanent bucket → off the grid, excluded
+    { bucket_index: PERMANENT_BUCKET }, // permanent → off the grid, excluded
   ];
 
   it('day 0: only bucket A is due; B and C are scheduled but not yet due', () => {

@@ -12,8 +12,8 @@ export type Child = {
   display_name: string;
   avatar: string | null;
   // Mastery threshold: after this many consecutive top-bucket passes a card
-  // graduates into the deck's permanent bucket (null = never graduate, cards
-  // cycle forever in the top interval bucket).
+  // graduates into the permanent bucket (null = never graduate, cards cycle
+  // forever in the top interval bucket).
   graduate_after_passes: number | null;
   // Daily permanent-bucket lottery size: up to this many permanent cards are
   // drawn for review each day (weighted by days since last test; see
@@ -56,9 +56,10 @@ export type Card = {
 export type CardState = {
   child_id: string;
   card_id: string;
-  // Which bucket the card sits in. The last index (= the deck's interval count)
-  // is the permanent bucket — off the grid, re-tested by the daily lottery. See
-  // "the permanent bucket" in leitner.ts.
+  // 0-indexed bucket (0 = A), or PERMANENT_BUCKET (-1) once the card has
+  // graduated: off the grid, re-tested by the daily lottery, independent of how
+  // many buckets the deck has. Test it with isPermanent(). See "the permanent
+  // bucket" in leitner.ts.
   bucket_index: number;
   // Scheduling anchor (see leitner.ts "last_tested_on model"). Due-ness is derived
   // from this + bucket + the deck's cycle start; there is no stored due date.

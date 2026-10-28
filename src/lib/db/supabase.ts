@@ -7,8 +7,8 @@ import {
   addDays,
   cycleDayOf,
   isDueToday,
-  isPermanentBucket,
-  permanentBucketIndex,
+  isPermanent,
+  PERMANENT_BUCKET,
   pickPermanentDraws,
   todayInTz,
 } from '@/lib/leitner';
@@ -159,9 +159,6 @@ export const supabaseDB: DB = {
     return data as Deck;
   },
   async updateDeck(id, patch): Promise<Deck> {
-    // Read the deck first: re-clamping needs the bucket count as it WAS, to tell
-    // permanent cards (old last index) from cards in a removed interval tier.
-    const prev = patch.bucket_intervals_days ? await supabaseDB.getDeck(id) : null;
     const { data, error } = await supabase
       .from('decks')
       .update(patch)
@@ -170,38 +167,29 @@ export const supabaseDB: DB = {
       .single();
     if (error) throw error;
     const next = data as Deck;
-    if (patch.bucket_intervals_days && prev) {
-      const wasPermanent = permanentBucketIndex(prev.bucket_intervals_days);
-      const nowPermanent = permanentBucketIndex(patch.bucket_intervals_days);
-      const newTopInterval = nowPermanent - 1;
-      // The deck shrank: cards in removed interval tiers move down to the new top
-      // interval bucket, while cards that had graduated ride the change and stay
-      // permanent — losing a tier is not a demotion of everything that mastered.
-      // Only bucket_index is rewritten; last_tested_on and the top-bucket pass
-      // counter carry over. Includes states of unassigned children (they persist
-      // to preserve progress).
-      const { data: cardRows, error: cErr } = await supabase
-        .from('cards')
-        .select('id')
-        .eq('deck_id', id);
-      if (cErr) throw cErr;
-      const cardIds = ((cardRows ?? []) as { id: string }[]).map((c) => c.id);
-      if (cardIds.length && nowPermanent !== wasPermanent) {
-        const { error: pErr } = await supabase
-          .from('card_states')
-          .update({ bucket_index: nowPermanent })
-          .in('card_id', cardIds)
-          .gte('bucket_index', wasPermanent);
-        if (pErr) throw pErr;
-      }
-      if (cardIds.length) {
-        const { error: sErr } = await supabase
-          .from('card_states')
-          .update({ bucket_index: newTopInterval })
-          .in('card_id', cardIds)
-          .gt('bucket_index', newTopInterval)
-          .lt('bucket_index', nowPermanent);
-        if (sErr) throw sErr;
+    if (patch.bucket_intervals_days) {
+      const topIdx = patch.bucket_intervals_days.length - 1;
+      // The deck shrank: move cards in removed buckets down to the new top
+      // bucket (index newLength-1). Only bucket_index is rewritten —
+      // last_tested_on and the top-bucket pass counter carry over. Includes
+      // states of unassigned children (they persist to preserve progress).
+      // Permanent cards (bucket_index = PERMANENT_BUCKET, -1) are never above the
+      // top bucket, so `gt` leaves them alone.
+      if (topIdx >= 0) {
+        const { data: cardRows, error: cErr } = await supabase
+          .from('cards')
+          .select('id')
+          .eq('deck_id', id);
+        if (cErr) throw cErr;
+        const cardIds = ((cardRows ?? []) as { id: string }[]).map((c) => c.id);
+        if (cardIds.length) {
+          const { error: sErr } = await supabase
+            .from('card_states')
+            .update({ bucket_index: topIdx })
+            .in('card_id', cardIds)
+            .gt('bucket_index', topIdx);
+          if (sErr) throw sErr;
+        }
       }
     }
     return next;
@@ -345,7 +333,8 @@ export const supabaseDB: DB = {
           deck:decks!inner(${DECK_COLS})
         )
       `)
-      .eq('child_id', childId);
+      .eq('child_id', childId)
+      .gte('bucket_index', 0); // permanent cards (-1) are the lottery's, never grid-due
     if (error) throw error;
 
     type Row = CardState & { card: Card & { deck: Deck } };
@@ -384,7 +373,8 @@ export const supabaseDB: DB = {
           deck:decks!inner(${DECK_COLS})
         )
       `)
-      .eq('child_id', childId);
+      .eq('child_id', childId)
+      .eq('bucket_index', PERMANENT_BUCKET);
     if (error) throw error;
 
     type Row = CardState & { card: Card & { deck: Deck } };
@@ -394,11 +384,7 @@ export const supabaseDB: DB = {
         const { deck, ...cardFields } = card;
         return { ...stateFields, card: cardFields, deck };
       })
-      .filter(
-        (row) =>
-          assigned.has(row.deck.id) &&
-          isPermanentBucket(row.bucket_index, row.deck.bucket_intervals_days),
-      );
+      .filter((row) => assigned.has(row.deck.id));
     // A miss drops a card to bucket 0, so a card answered today can leave `pool`
     // and stop counting against the day's budget — which refunds its slot and lets
     // the lottery draw a replacement. bucket_before on the review says where the
@@ -407,7 +393,7 @@ export const supabaseDB: DB = {
     const sinceIso = `${addDays(todayInTz(timezone), -1)}T00:00:00.000Z`;
     const { data: recent, error: revErr } = await supabase
       .from('reviews')
-      .select('card_id, reviewed_at, bucket_before, card:cards!inner(deck:decks!inner(id, bucket_intervals_days))')
+      .select('card_id, reviewed_at, bucket_before, card:cards!inner(deck_id)')
       .eq('child_id', childId)
       .gte('reviewed_at', sinceIso);
     if (revErr) throw revErr;
@@ -419,13 +405,13 @@ export const supabaseDB: DB = {
         card_id: string;
         reviewed_at: string;
         bucket_before: number;
-        card: { deck: { id: string; bucket_intervals_days: number[] } };
+        card: { deck_id: string };
       }[])
         .filter(
           (r) =>
             !inPool.has(r.card_id) &&
-            assigned.has(r.card.deck.id) &&
-            isPermanentBucket(r.bucket_before, r.card.deck.bucket_intervals_days) &&
+            assigned.has(r.card.deck_id) &&
+            isPermanent(r.bucket_before) &&
             todayInTz(timezone, new Date(r.reviewed_at)) === realToday,
         )
         .map((r) => r.card_id),
@@ -493,8 +479,9 @@ export const supabaseDB: DB = {
     if (todays.length === 0) return 0;
 
     // The earliest review of the day holds the bucket the card had this morning.
-    // Restoring it restores permanence too, since permanent is just the last
-    // bucket — a fresh graduation is undone and an established permanent card
+    // Restoring it restores permanence too: a card that was permanent has
+    // bucket_before = PERMANENT_BUCKET, a fresh graduation has its top interval
+    // bucket, so a fresh graduation is undone and an established permanent card
     // stays permanent, with no separate flag to reconcile.
     const bucketBefore = new Map<string, number>();
     for (const r of todays) {

@@ -20,7 +20,7 @@ import {
   parseIntervalsList,
   bucketIndexes,
   bucketLabel,
-  permanentBucketIndex,
+  isPermanent,
 } from '@/lib/leitner';
 import { getEffectiveToday } from '@/lib/today';
 import type { Card, CardState, Child, Deck, GradingMode } from '@/types/domain';
@@ -240,13 +240,9 @@ export default function DeckDetailScreen() {
     if (!currentChild) {
       return `Removing ${removed} — cards in removed buckets will move to bucket ${top}.`;
     }
-    // Permanent cards sit at the OLD permanent index and ride the change — they
-    // stay permanent, so they are not part of the move.
-    const permanent = permanentBucketIndex(deck.bucket_intervals_days);
-    const n = cards.filter((c) => {
-      const b = cardStates.get(c.id)?.bucket_index ?? -1;
-      return b >= newLen && b < permanent;
-    }).length;
+    // Permanent cards (PERMANENT_BUCKET, -1) are never above the new top bucket,
+    // so they are not part of the move.
+    const n = cards.filter((c) => (cardStates.get(c.id)?.bucket_index ?? 0) >= newLen).length;
     if (n === 0) return `Removing ${removed} — no cards sit in the removed buckets.`;
     return `Removing ${removed} — ${n} of ${currentChild.display_name}'s cards will move to bucket ${top}. 🏆 Permanent cards stay permanent.`;
   }
@@ -286,8 +282,9 @@ export default function DeckDetailScreen() {
     }
   }
 
-  // Every bucket change goes through here, permanent included — it is just the
-  // last index, so there is no separate toggle and no second way to say it.
+  // Every bucket change goes through here, permanent included — it is just
+  // PERMANENT_BUCKET among the choices, so there is no separate toggle and no
+  // second way to say it.
   async function setBucket(cardId: string, bucketIndex: number) {
     if (!currentChild || !deck) return;
     const existing = cardStates.get(cardId);
@@ -458,11 +455,7 @@ export default function DeckDetailScreen() {
             n: cards.filter((c) => cardStates.get(c.id)?.bucket_index === i).length,
           }))
           .filter(({ n }) => n > 0)
-          .map(({ i, n }) =>
-            i === permanentBucketIndex(deck.bucket_intervals_days)
-              ? `${n} 🏆`
-              : `${n} ${bucketLetter(i)}`,
-          )
+          .map(({ i, n }) => `${n} ${isPermanent(i) ? '🏆 Permanent' : bucketLetter(i)}`)
           .join(', ')
       : '';
 
@@ -706,11 +699,7 @@ export default function DeckDetailScreen() {
                       onPress={() => setAddBucket(i)}
                       disabled={addPending}
                       style={[styles.bucketBtn, addBucket === i && styles.bucketBtnActive]}>
-                      <ThemedText>
-                        {i === permanentBucketIndex(deck.bucket_intervals_days)
-                          ? '🏆'
-                          : bucketLetter(i)}
-                      </ThemedText>
+                      <ThemedText>{bucketLetter(i)}</ThemedText>
                     </Pressable>
                   ))}
                 </View>
@@ -748,9 +737,7 @@ export default function DeckDetailScreen() {
                 onPress={() => setGroupFilterOpen((v) => !v)}>
                 <ThemedText type="small">
                   Filter:{' '}
-                  {groupFilter == null
-                    ? 'All groups'
-                    : bucketLabel(groupFilter, deck.bucket_intervals_days)}
+                  {groupFilter == null ? 'All groups' : bucketLabel(groupFilter)}
                 </ThemedText>
                 <ThemedText themeColor="textSecondary">{groupFilterOpen ? '▾' : '▸'}</ThemedText>
               </Pressable>
@@ -777,7 +764,7 @@ export default function DeckDetailScreen() {
                           setGroupFilterOpen(false);
                         }}>
                         <ThemedText style={groupFilter === i ? styles.filterOptionActive : undefined}>
-                          {bucketLabel(i, deck.bucket_intervals_days)} ({n})
+                          {bucketLabel(i)} ({n})
                         </ThemedText>
                       </Pressable>
                     );
@@ -860,10 +847,7 @@ export default function DeckDetailScreen() {
                         }
                         style={styles.bucketChip}>
                         <ThemedText type="small">
-                          {bucketLabel(
-                            cardStates.get(card.id)!.bucket_index,
-                            deck.bucket_intervals_days,
-                          )}
+                          {bucketLabel(cardStates.get(card.id)!.bucket_index)}
                         </ThemedText>
                       </Pressable>
                     )}
@@ -881,7 +865,6 @@ export default function DeckDetailScreen() {
                 {bucketPickerCardId === card.id && deck && (
                   <View style={styles.bucketPickerRow}>
                     {bucketIndexes(deck.bucket_intervals_days).map((i) => {
-                      const permanent = i === permanentBucketIndex(deck.bucket_intervals_days);
                       const active = cardStates.get(card.id)?.bucket_index === i;
                       return (
                         <Pressable
@@ -891,7 +874,7 @@ export default function DeckDetailScreen() {
                             styles.bucketBtn,
                             active && styles.bucketBtnActive,
                           ]}>
-                          <ThemedText>{permanent ? '🏆' : bucketLetter(i)}</ThemedText>
+                          <ThemedText>{bucketLetter(i)}</ThemedText>
                         </Pressable>
                       );
                     })}

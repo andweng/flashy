@@ -253,7 +253,7 @@ export default function ReviewScreen() {
 
         <ThemedText themeColor="textSecondary" type="small" style={styles.meta}>
           {current.deck.name} ·{' '}
-          {bucketLabel(current.state.bucket_index, current.deck.bucket_intervals_days)}
+          {bucketLabel(current.state.bucket_index)}
         </ThemedText>
 
         <ThemedView type="backgroundElement" style={styles.cardArea}>

@@ -9,7 +9,9 @@ import {
   applyReview,
   initialLastTested,
   isDueToday,
+  isPermanent,
   mostRecentSlot,
+  PERMANENT_BUCKET,
 } from '@/lib/leitner';
 import type { CardState, Child, Deck } from '@/types/domain';
 
@@ -21,7 +23,7 @@ const B = 1;
 const C = 2;
 const D = 3;
 const E = 4;
-const PERM = 5; // permanentBucketIndex(IV) — one past the last interval
+const PERM = PERMANENT_BUCKET;
 
 function makeDeck(overrides: Partial<Deck> = {}): Deck {
   return {
@@ -153,6 +155,10 @@ describe('initialLastTested', () => {
     // ...but due when its first grid slot arrives (cycle day 4, four days later).
     expect(isDueToday(fresh, IV, 4, addDays(TODAY, 4))).toBe(true);
   });
+
+  it('permanent starts "tested as of today" → weight 0, not drawn until a later day', () => {
+    expect(initialLastTested(TODAY, PERM)).toBe(TODAY);
+  });
 });
 
 describe('applyReview', () => {
@@ -196,8 +202,8 @@ describe('applyReview', () => {
     const gradChild = makeChild({ graduate_after_passes: 2 });
     const s = makeState({ bucket_index: E, consecutive_passes_in_top_bucket: 1 });
     const { next_state, enteredPermanent } = applyReview(s, deck, gradChild, TODAY, { kind: 'pass' });
-    expect(next_state.consecutive_passes_in_top_bucket).toBe(2);
     expect(next_state.bucket_index).toBe(PERM);
+    expect(next_state.consecutive_passes_in_top_bucket).toBe(0); // counter resets on graduation
     expect(enteredPermanent).toBe(true);
   });
 
@@ -233,8 +239,9 @@ describe('applyReview', () => {
     );
     expect(next_state.bucket_index).toBe(PERM);
     expect(next_state.last_tested_on).toBe(TODAY); // weight anchor for the lottery
-    expect(next_state.consecutive_passes_in_top_bucket).toBe(8);
+    expect(next_state.consecutive_passes_in_top_bucket).toBe(0); // nothing left to count
     expect(enteredPermanent).toBe(false); // already permanent
+    expect(isPermanent(next_state)).toBe(true); // and NOT promoted into bucket 0
   });
 
   it('a fresh graduation moves into the permanent bucket, off the grid', () => {

@@ -5,8 +5,7 @@ import {
   addDays,
   cycleDayOf,
   isDueToday,
-  isPermanentBucket,
-  permanentBucketIndex,
+  isPermanent,
   pickPermanentDraws,
   todayInTz,
 } from '@/lib/leitner';
@@ -114,20 +113,15 @@ const reviews: Review[] = [];
 // top bucket. Only bucket_index is rewritten; last_tested_on and the top-bucket
 // pass counter carry over so due-ness and graduation progress keep flowing on
 // the new bucket's grid. States for unassigned children are re-clamped too —
-// they persist to preserve progress.
-//
-// Permanent cards ride the change: removing an interval tier is not a demotion
-// of everything that graduated, so a card at the old permanent index moves to
-// the new one and stays permanent. That needs the deck as it was, hence prevDeck.
-function reclampBucketsForDeck(deckId: string, prevDeck: Deck, nextDeck: Deck) {
-  const wasPermanent = permanentBucketIndex(prevDeck.bucket_intervals_days);
-  const nowPermanent = permanentBucketIndex(nextDeck.bucket_intervals_days);
-  const newTopInterval = nowPermanent - 1;
+// they persist to preserve progress. Permanent cards (PERMANENT_BUCKET, -1) are
+// never "above" the top bucket, so they sit out the change untouched.
+function reclampBucketsForDeck(deckId: string, nextDeck: Deck) {
+  const topIdx = nextDeck.bucket_intervals_days.length - 1;
   const deckCardIds = new Set(cards.filter((c) => c.deck_id === deckId).map((c) => c.id));
   for (const s of states) {
-    if (!deckCardIds.has(s.card_id)) continue;
-    if (s.bucket_index >= wasPermanent) s.bucket_index = nowPermanent;
-    else if (s.bucket_index > newTopInterval) s.bucket_index = newTopInterval;
+    if (deckCardIds.has(s.card_id) && s.bucket_index > topIdx) {
+      s.bucket_index = topIdx;
+    }
   }
 }
 
@@ -146,9 +140,7 @@ function countPermanentExitsToday(
     reviews
       .filter((r) => {
         if (r.child_id !== childId || inPool.has(r.card_id)) return false;
-        const card = cards.find((c) => c.id === r.card_id);
-        const deck = card && decks.find((d) => d.id === card.deck_id);
-        if (!deck || !isPermanentBucket(r.bucket_before, deck.bucket_intervals_days)) return false;
+        if (!isPermanent(r.bucket_before)) return false;
         return todayInTz(timezone, new Date(r.reviewed_at)) === realToday;
       })
       .map((r) => r.card_id),
@@ -231,10 +223,9 @@ export const mockDB: DB = {
   async updateDeck(id, patch) {
     const idx = decks.findIndex((d) => d.id === id);
     if (idx < 0) throw new Error('Deck not found');
-    const prev = decks[idx];
-    const next = { ...prev, ...patch };
+    const next = { ...decks[idx], ...patch };
     decks[idx] = next;
-    reclampBucketsForDeck(id, prev, next);
+    reclampBucketsForDeck(id, next);
     return next;
   },
   async deleteDeck(id) {
@@ -331,7 +322,7 @@ export const mockDB: DB = {
         .map((a) => [a.deck_id, a.cycle_start_date ?? null]),
     );
     return states
-      .filter((s) => s.child_id === childId)
+      .filter((s) => s.child_id === childId && !isPermanent(s))
       .map((s) => {
         const card = cards.find((c) => c.id === s.card_id)!;
         const deck = decks.find((d) => d.id === card.deck_id)!;
@@ -353,17 +344,13 @@ export const mockDB: DB = {
       assignments.filter((a) => a.child_id === childId).map((a) => a.deck_id),
     );
     const pool = states
-      .filter((s) => s.child_id === childId)
+      .filter((s) => s.child_id === childId && isPermanent(s))
       .map((s) => {
         const card = cards.find((c) => c.id === s.card_id)!;
         const deck = decks.find((d) => d.id === card.deck_id)!;
         return { ...s, card, deck };
       })
-      .filter(
-        (row) =>
-          startByDeck.has(row.deck.id) &&
-          isPermanentBucket(row.bucket_index, row.deck.bucket_intervals_days),
-      );
+      .filter((row) => startByDeck.has(row.deck.id));
     return pickPermanentDraws(
       pool,
       child.permanent_draws_per_day,
@@ -404,8 +391,9 @@ export const mockDB: DB = {
     if (todays.length === 0) return 0;
 
     // The earliest review of the day holds the bucket the card had this morning.
-    // Restoring it restores permanence too, since permanent is just the last
-    // bucket — a fresh graduation is undone and an established permanent card
+    // Restoring it restores permanence too: a card that was permanent has
+    // bucket_before = PERMANENT_BUCKET, a fresh graduation has its top interval
+    // bucket, so a fresh graduation is undone and an established permanent card
     // stays permanent, with no separate flag to reconcile.
     const bucketBefore = new Map<string, number>();
     for (const r of todays) {

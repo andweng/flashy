@@ -1,5 +1,5 @@
 -- One-off: promote every card sitting in its deck's TOP INTERVAL bucket into
--- that deck's permanent bucket, for every child.
+-- the permanent bucket (bucket_index = -1), for every child.
 --
 -- Not a migration — migrations run on every deploy, and this rewrites data. Run
 -- it by hand, once, from the Supabase SQL editor or psql.
@@ -10,10 +10,10 @@
 -- than a middle one (or nothing). To restrict it to literal E, uncomment the
 -- `cardinality(...) = 5` line in both the dry run and the update.
 --
--- Permanent is bucket index cardinality(bucket_intervals_days) — see "the
--- permanent bucket" in src/lib/leitner.ts. Promoted cards leave the interval
--- grid and are re-tested by the daily lottery instead, so expect each child's
--- daily due count to drop by roughly what the dry run reports.
+-- Permanent is the sentinel bucket_index -1, independent of the deck's bucket
+-- count — see "the permanent bucket" in src/lib/leitner.ts. Promoted cards leave
+-- the interval grid and are re-tested by the daily lottery instead, so expect
+-- each child's daily due count to drop by roughly what the dry run reports.
 --
 -- last_tested_on is deliberately left alone. The lottery weights by days since
 -- last test, so keeping each card's real date lets the promoted cards enter with
@@ -38,7 +38,7 @@ order by 1, 2;
 begin;
 
 update card_states cs
-   set bucket_index = cardinality(d.bucket_intervals_days)
+   set bucket_index = -1
   from cards ca
   join decks d on d.id = ca.deck_id
  where ca.id = cs.card_id
@@ -58,9 +58,7 @@ select c.display_name,
        count(*) as permanent_pool,
        round(count(*)::numeric / nullif(c.permanent_draws_per_day, 0), 1) as days_per_rotation
 from card_states cs
-join cards ca   on ca.id = cs.card_id
-join decks d    on d.id = ca.deck_id
 join children c on c.id = cs.child_id
-where cs.bucket_index >= cardinality(d.bucket_intervals_days)
+where cs.bucket_index = -1
 group by 1, 2
 order by 1;
