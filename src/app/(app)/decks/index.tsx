@@ -24,8 +24,6 @@ export default function DecksScreen() {
   const [query, setQuery] = useState('');
   // Inline picker for enabling a deck the parent owns but isn't in rotation.
   const [addExistingOpen, setAddExistingOpen] = useState(false);
-  // Two-tap confirm before removing a deck from rotation (id of the armed deck).
-  const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -83,18 +81,6 @@ export default function DecksScreen() {
     setRows((rs) => rs?.map((r) => (r.deck.id === deck.id ? { ...r, assigned: true } : r)) ?? null);
   }
 
-  // First tap arms the confirm; second tap actually removes it from rotation.
-  async function removeFromRotation(deck: Deck) {
-    if (!child) return;
-    if (confirmingRemoveId !== deck.id) {
-      setConfirmingRemoveId(deck.id);
-      return;
-    }
-    setConfirmingRemoveId(null);
-    await db.unassignDeckFromChild(deck.id, child.id);
-    setRows((rs) => rs?.map((r) => (r.deck.id === deck.id ? { ...r, assigned: false } : r)) ?? null);
-  }
-
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safe}>
@@ -142,20 +128,6 @@ export default function DecksScreen() {
                       <ThemedText themeColor="textSecondary" type="small">
                         {cardCount} card{cardCount === 1 ? '' : 's'}
                       </ThemedText>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => removeFromRotation(deck)}
-                      hitSlop={8}
-                      style={styles.removeBtn}>
-                      {confirmingRemoveId === deck.id ? (
-                        <ThemedText type="small" style={styles.removeConfirmText}>
-                          Tap to confirm
-                        </ThemedText>
-                      ) : (
-                        <ThemedText type="small" themeColor="textSecondary">
-                          Remove
-                        </ThemedText>
-                      )}
                     </Pressable>
                   </ThemedView>
                 ))
@@ -228,8 +200,6 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   rowMain: { flex: 1, gap: Spacing.one },
-  removeBtn: { paddingVertical: Spacing.one, paddingHorizontal: Spacing.two },
-  removeConfirmText: { color: '#d2433f', fontWeight: '600' },
   addSection: { gap: Spacing.two, marginTop: Spacing.two },
   actionBtn: {
     padding: Spacing.three,

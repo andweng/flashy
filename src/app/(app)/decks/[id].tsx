@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ConfirmationDialog, type ConfirmationAction } from '@/components/confirmation-dialog';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
@@ -82,8 +83,7 @@ export default function DeckDetailScreen() {
   const [duplicating, setDuplicating] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
-  // Delete-deck confirmation
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmation, setConfirmation] = useState<ConfirmationAction | null>(null);
 
   const refresh = useCallback(async () => {
     if (!id) return;
@@ -112,7 +112,9 @@ export default function DeckDetailScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      setConfirmation(null);
       void refresh();
+      return () => setConfirmation(null);
     }, [refresh]),
   );
 
@@ -158,10 +160,17 @@ export default function DeckDetailScreen() {
     }
   }
 
-  async function removeCard(cardId: string) {
-    await db.deleteCard(cardId);
-    setCards((cs) => cs.filter((c) => c.id !== cardId));
-    if (editingId === cardId) setEditingId(null);
+  function removeCard(card: Card) {
+    setConfirmation({
+      title: 'Delete card?',
+      message: `Permanently delete “${card.front}” from this deck? This also deletes its learning progress for every child. This cannot be undone.`,
+      confirmLabel: 'Delete card',
+      onConfirm: async () => {
+        await db.deleteCard(card.id);
+        setCards((cs) => cs.filter((c) => c.id !== card.id));
+        if (editingId === card.id) setEditingId(null);
+      },
+    });
   }
 
   function startEdit(card: Card) {
@@ -301,16 +310,26 @@ export default function DeckDetailScreen() {
     setBucketPickerCardId(null);
   }
 
-  async function toggleAssign(childId: string, currentlyAssigned: boolean) {
+  async function toggleAssign(child: Child, currentlyAssigned: boolean) {
     if (!deck) return;
-    if (currentlyAssigned) await db.unassignDeckFromChild(deck.id, childId);
-    else await db.assignDeckToChild(deck.id, childId);
-    setAssignedSet((s) => {
-      const next = new Set(s);
-      if (currentlyAssigned) next.delete(childId);
-      else next.add(childId);
-      return next;
-    });
+    if (currentlyAssigned) {
+      setConfirmation({
+        title: 'Remove deck?',
+        message: `Remove “${deck.name}” from ${child.display_name}’s rotation? The deck, its cards, and learning progress will stay saved.`,
+        confirmLabel: 'Remove deck',
+        onConfirm: async () => {
+          await db.unassignDeckFromChild(deck.id, child.id);
+          setAssignedSet((s) => {
+            const next = new Set(s);
+            next.delete(child.id);
+            return next;
+          });
+        },
+      });
+      return;
+    }
+    await db.assignDeckToChild(deck.id, child.id);
+    setAssignedSet((s) => new Set(s).add(child.id));
   }
 
   async function duplicateDeck() {
@@ -352,14 +371,17 @@ export default function DeckDetailScreen() {
     setTimeout(() => setCopyFeedback(null), 4000);
   }
 
-  async function handleDelete() {
+  function handleDelete() {
     if (!deck) return;
-    if (!confirmingDelete) {
-      setConfirmingDelete(true);
-      return;
-    }
-    await db.deleteDeck(deck.id);
-    router.replace('/decks');
+    setConfirmation({
+      title: 'Delete deck?',
+      message: `Permanently delete “${deck.name}” and all ${cards.length} card${cards.length === 1 ? '' : 's'}? This also deletes their learning progress for every child. This cannot be undone.`,
+      confirmLabel: 'Delete deck',
+      onConfirm: async () => {
+        await db.deleteDeck(deck.id);
+        router.replace('/decks');
+      },
+    });
   }
 
   const realToday = getEffectiveToday(scheduleTz);
@@ -848,7 +870,10 @@ export default function DeckDetailScreen() {
                     <Pressable onPress={() => startEdit(card)} accessibilityLabel="Edit card">
                       <ThemedText themeColor="textSecondary">✏️</ThemedText>
                     </Pressable>
-                    <Pressable onPress={() => removeCard(card.id)} accessibilityLabel="Delete card">
+                    <Pressable
+                      onPress={() => removeCard(card)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete card: ${card.front}`}>
                       <ThemedText style={styles.deleteText}>🗑️</ThemedText>
                     </Pressable>
                   </View>
@@ -887,7 +912,11 @@ export default function DeckDetailScreen() {
                     <ThemedText>
                       {c.avatar ?? '🙂'} {c.display_name}
                     </ThemedText>
-                    <Switch value={assigned} onValueChange={() => toggleAssign(c.id, assigned)} />
+                    <Switch
+                      value={assigned}
+                      onValueChange={() => toggleAssign(c, assigned)}
+                      accessibilityLabel={`Assign deck to ${c.display_name}`}
+                    />
                   </ThemedView>
                 );
               })}
@@ -912,13 +941,12 @@ export default function DeckDetailScreen() {
           </ThemedView>
 
           {/* Delete */}
-          <Pressable style={styles.deleteDeck} onPress={handleDelete}>
-            <ThemedText style={styles.deleteDeckText}>
-              {confirmingDelete ? 'Tap again to confirm delete' : 'Delete deck'}
-            </ThemedText>
+          <Pressable style={styles.deleteDeck} onPress={handleDelete} accessibilityRole="button">
+            <ThemedText style={styles.deleteDeckText}>Delete deck</ThemedText>
           </Pressable>
         </ScrollView>
       </SafeAreaView>
+      {confirmation && <ConfirmationDialog {...confirmation} onClose={() => setConfirmation(null)} />}
     </ThemedView>
   );
 }
