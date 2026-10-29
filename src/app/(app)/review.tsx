@@ -20,6 +20,7 @@ import { db } from '@/lib/db';
 import { applyReview, bucketLabel, checkTypedAnswer } from '@/lib/leitner';
 import {
   clearReviewSession,
+  isSessionCurrent,
   loadReviewSession,
   saveReviewSession,
 } from '@/lib/review-session';
@@ -89,7 +90,9 @@ export default function ReviewScreen() {
       // before falling back to building a fresh queue from what's due.
       const saved = await loadReviewSession(childId, _today);
       if (cancelled) return;
-      if (saved) {
+      const live = saved ? await db.listCardStatesForChild(childId) : [];
+      if (cancelled) return;
+      if (saved && isSessionCurrent(saved, live)) {
         setToday(_today);
         setItems(saved.items);
         setIndex(saved.index);

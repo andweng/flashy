@@ -57,6 +57,21 @@ export async function loadReviewSession(
   }
 }
 
+// True iff every card still waiting in the queue (index onward) sits in the same
+// bucket in the database as in the snapshot. Answered cards are expected to have
+// moved, so they are skipped. A mismatch means the data changed under the saved
+// queue (a migration, a reset, another device); finishing it would write stale
+// states back, so the caller should discard it and rebuild.
+export function isSessionCurrent(
+  session: PersistedReviewSession,
+  live: Pick<CardState, 'card_id' | 'bucket_index'>[],
+): boolean {
+  const bucketByCard = new Map(live.map((s) => [s.card_id, s.bucket_index]));
+  return session.items
+    .slice(session.index)
+    .every((item) => bucketByCard.get(item.state.card_id) === item.state.bucket_index);
+}
+
 export function saveReviewSession(childId: string, session: PersistedReviewSession): void {
   void AsyncStorage.setItem(keyFor(childId), JSON.stringify(session)).catch(() => {});
 }
